@@ -2084,3 +2084,200 @@
   invariant: Do not republish an existing npm version. Next publish must be a version not yet on the registry.
   files:
     - package.json
+- datetime: 2026-11-03 19:47
+  title: Debug trace of agent and plan source in the prompt hook
+  tags:
+    - logging
+    - routing
+  change: >-
+    onPrompt now logs (debug level only) the resolved session agent and whether it is jevCode. A second debug line with
+    the plan source and fallback reason follows in the next edit.
+  reason: >-
+    With debug:true a jevCode run on a region-blocked default model showed no prompt-hook output at all, so it was
+    impossible to tell whether the hook ran, was skipped or got 'keep' from Jev.
+  invariant: >-
+    Debug level only (no output when debug is off); never logs prompt text or keys; the hook still never throws and the
+    behaviour is unchanged.
+  files:
+    - src/opencode/prompt-hook.ts
+- datetime: 2026-11-03 19:47
+  title: Debug trace of plan source after routing
+  tags:
+    - logging
+    - routing
+  change: 'After route() the prompt hook logs at debug level: plan source (jev or fallback) and the fallback reason.'
+  reason: 'Completes the previous trace: shows why Jev did not switch the model (skip reasons are otherwise silent).'
+  invariant: Debug level only; no prompt text or keys in the line; behaviour unchanged.
+  files:
+    - src/opencode/prompt-hook.ts
+- datetime: 2026-11-03 19:48
+  title: Debug-log the raw session model when it cannot be read
+  tags:
+    - logging
+    - routing
+  change: >-
+    When route() cannot read the session model it now logs (debug only) the raw model value returned by session.get
+    before returning the fallback plan.
+  reason: >-
+    A jevCode run with no configured default model fell back with 'session model unreadable'; the raw value is needed to
+    decide how to handle a session without a model.
+  invariant: Debug only, wrapped in try/catch; returned plan identical to before; model object contains no secrets.
+  files:
+    - src/opencode/prompt-hook.ts
+- datetime: 2026-11-03 19:56
+  title: Add /jev debug command module
+  tags:
+    - integration
+    - architecture
+  change: >-
+    New src/opencode/jev-command.ts: registers command `jev` via ctx.command.transform. It sends the argument as one
+    noul question through the shared Jev client and posts `true` (probability >= 0.5) or `false` with
+    ctx.session.synthetic(resume:false). Empty argument gives a usage text; no key and no transport gives exactly
+    'Provide TYPESAFE_API_KEY or OPENROUTER_API_KEY'; other failures give a generic failure text. Wiring in index.ts and
+    tests follow.
+  reason: User wants a way to check that the Jev API integration and key work, since routing failures are silent (fail-open).
+  invariant: >-
+    Command never throws and starts no model turn; it does not touch routing state or the jevCode isolation; key never
+    printed; uses the shared client from jevClientFor.
+  files:
+    - src/opencode/jev-command.ts
+- datetime: 2026-11-03 19:56
+  title: Import jevCommandModule in index.ts
+  tags:
+    - integration
+  change: index.ts imports jevCommandModule; the MODULES entry follows in the next edit.
+  reason: Wire the /jev command into the plugin.
+  invariant: Each module init stays isolated; a failing /jev registration must not break the other modules.
+  files:
+    - src/index.ts
+- datetime: 2026-11-03 19:56
+  title: Register jevCommandModule in MODULES
+  tags:
+    - integration
+  change: MODULES is now [agentModule, promptHookModule, contextHookModule, jevCommandModule].
+  reason: Activates the /jev command.
+  invariant: Command module is last so a failure there cannot affect routing modules; tests/entry.test.ts module list must match.
+  files:
+    - src/index.ts
+- datetime: 2026-11-03 19:56
+  title: Unit tests for /jev command
+  tags:
+    - tests
+  change: >-
+    Added tests/router/jev-command.test.ts: true/false threshold, state and question shape, usage on empty input, exact
+    no-key message, failure text, never throws, and module registration posting a non-resuming synthetic message.
+  reason: Cover the /jev command behaviour requested by the user.
+  invariant: Fakes only; no network, no keys.
+  files:
+    - tests/router/jev-command.test.ts
+- datetime: 2026-11-03 19:57
+  title: '/jev: do not await command.transform during setup'
+  tags:
+    - integration
+    - resilience
+  change: >-
+    jev-command init starts ctx.command.transform without awaiting it (edit continues in the next change: errors are
+    caught and logged, cleanup disposes the registration).
+  reason: >-
+    Observed on opencode 2.2.5: with the awaited version the module never logged 'ready', /api/command did not list jev
+    and no error appeared, so init apparently hangs.
+  invariant: Setup must never block or throw because of a command registration; cleanup must still dispose it.
+  files:
+    - src/opencode/jev-command.ts
+- datetime: 2026-11-03 19:58
+  title: '/jev: catch registration errors and return disposing cleanup'
+  tags:
+    - integration
+    - resilience
+  change: >-
+    The un-awaited command.transform promise now logs success at debug and errors at error level, and init returns a
+    cleanup that awaits the registration and disposes it.
+  reason: Completes the previous change; avoids an unhandled rejection and a leaked registration.
+  invariant: No unhandled rejection from registration; cleanup never throws.
+  files:
+    - src/opencode/jev-command.ts
+- datetime: 2026-11-03 19:58
+  title: '/jev: debug line at init start'
+  tags:
+    - logging
+  change: 'Added a debug log ''/jev: init start'' at the top of jevCommandModule.init.'
+  reason: The module never logged 'ready' on the real host; need to see whether init is reached.
+  invariant: Debug level only.
+  files:
+    - src/opencode/jev-command.ts
+- datetime: 2026-11-03 20:04
+  title: /jev returns the key error before calling Jev
+  tags:
+    - integration
+  change: >-
+    answerJevQuestion returns 'Provide TYPESAFE_API_KEY or OPENROUTER_API_KEY' as soon as no key is configured, and does
+    not call Jev. The failed-request text is only used when a key is set.
+  reason: The user asked for that exact error whenever the Jev API key is missing, even if another transport could answer.
+  invariant: The error text is exact and contains no key value. A present key still goes to Jev and returns true or false.
+  files:
+    - src/opencode/jev-command.ts
+- datetime: 2026-11-03 20:04
+  title: /jev drops the unused no-transport branch
+  tags:
+    - integration
+  change: >-
+    A missing Jev answer with a key set now always returns the failure text. The no-key check no longer depends on the
+    transport name.
+  reason: The key error is decided before the call, so the old branch was dead.
+  invariant: true and false still come only from a noul answer at the 0.5 threshold.
+  files:
+    - src/opencode/jev-command.ts
+- datetime: 2026-11-03 20:04
+  title: /jev answer helper no longer takes describe
+  tags:
+    - integration
+  change: answerJevQuestion now only needs client.ask. The no-key path does not inspect the transport.
+  reason: describe() was only used by the removed no-key branch.
+  invariant: Callers can still pass a full Jev client.
+  files:
+    - src/opencode/jev-command.ts
+- datetime: 2026-11-03 20:04
+  title: Test that /jev does not call Jev without a key
+  tags:
+    - tests
+  change: The no-key unit test now also asserts that ask() is not called.
+  reason: The command must return the key error without a network call.
+  invariant: No network and no real keys in the test.
+  files:
+    - tests/router/jev-command.test.ts
+- datetime: 2026-11-03 20:04
+  title: /jev logs the reply at info
+  tags:
+    - logging
+    - integration
+  change: >-
+    The /jev command logs the reply text at info level after Jev answers. The reply is true, false, the usage line, the
+    key error, or the failure line.
+  reason: >-
+    The answer is also posted to the session inbox, which the message list does not show until delivery. The log makes
+    the result visible in opencode --print-logs.
+  invariant: The log line never includes the question text or the API key.
+  files:
+    - src/opencode/jev-command.ts
+- datetime: 2026-11-03 20:04
+  title: README contents link for /jev
+  tags:
+    - docs
+    - README
+  change: Contents list links to the /jev debug command section. The section body follows.
+  reason: Document the new command.
+  invariant: README stays UTF-8 without BOM. No secrets.
+  files:
+    - README.md
+- datetime: 2026-11-03 20:05
+  title: README section for the /jev command
+  tags:
+    - docs
+    - README
+  change: >-
+    Documented /jev: true/false at probability 0.5, the exact missing-key error, the usage line, and that the answer is
+    a synthetic inbox message plus an info log. No model turn, any agent.
+  reason: A reviewer should be able to use the debug command from the README.
+  invariant: The documented error string matches NO_KEY_MESSAGE. No secrets in the README.
+  files:
+    - README.md

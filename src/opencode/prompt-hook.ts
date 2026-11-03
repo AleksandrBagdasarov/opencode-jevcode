@@ -75,7 +75,15 @@ export function createPromptHook(deps: PromptHookDeps): (event: PromptEvent) => 
     } catch (err) {
       log.warn("could not read the session model:", err);
     }
-    if (!current) return { ...plan, fallbackReason: "session model unreadable" };
+    if (!current) {
+      try {
+        const raw = unwrapSession(await ctx.session.get({ sessionID }));
+        log.debug(`prompt hook: session model unreadable; raw model=${JSON.stringify(raw?.model) ?? "undefined"}`);
+      } catch {
+        // debug only
+      }
+      return { ...plan, fallbackReason: "session model unreadable" };
+    }
 
     const input: StageAInput = { sessionID, turnKey, text, current, prompt: event.prompt ?? {} };
     const reasons: string[] = [];
@@ -176,6 +184,7 @@ export function createPromptHook(deps: PromptHookDeps): (event: PromptEvent) => 
     let turnKey = "";
     try {
       const agent = await resolveSessionAgent(ctx, sessionID, options);
+      log.debug(`prompt hook: session agent=${String(agent)} jev=${isJevAgent(agent)}`);
       if (!isJevAgent(agent)) {
         await restoreIfNeeded(ctx, memory, sessionID, log);
         return;
@@ -185,6 +194,7 @@ export function createPromptHook(deps: PromptHookDeps): (event: PromptEvent) => 
       turnKey = turnKeyFor(event.messageID, text);
       await reconcileOnJevPrompt(ctx, memory, sessionID, log);
       plan = await route(event, sessionID, turnKey, text);
+      log.debug(`prompt hook: plan source=${plan.source}${plan.fallbackReason ? ` reason=${plan.fallbackReason}` : ""}`);
     } catch (err) {
       try {
         log.warn("prompt hook failed; using the fallback plan:", err);

@@ -20,6 +20,7 @@ Tested against OpenCode **2.2.5** (`@opencode/plugin` >= 2.2.0).
 
 - [Install](#install)
 - [What the jevCode agent is](#what-the-jevcode-agent-is)
+- [`/jev` debug command](#jev-debug-command)
 - [Jev providers and keys](#jev-providers-and-keys)
 - [Options](#options)
 - [Recommended: a `models` allowlist](#recommended-a-models-allowlist)
@@ -99,6 +100,15 @@ The list must contain an agent with id `jevCode` and `mode: primary`.
 - When you leave `jevCode` for another agent, the model that was active **before** Jev switched it is restored on
   the next prompt, unless you picked a different model by hand in between.
 - `makeDefault: true` makes `jevCode` the default agent (off by default).
+
+## `/jev` debug command
+
+`/jev <yes/no question>` asks Jev one question and posts the answer in the session. It does not start a model turn and it does not change routing. It works in any agent.
+
+- The answer is `true` or `false`. Jev returns a probability; `0.5` or more is `true`.
+- With no `TYPESAFE_API_KEY` and no `OPENROUTER_API_KEY` (not in the process, `service.json`, or `~/.config/opencode/.env`) the answer is exactly `Provide TYPESAFE_API_KEY or OPENROUTER_API_KEY`. Jev is not called.
+- `/jev` with no question posts `Usage: /jev <yes/no question>`.
+- The answer is a synthetic inbox message (`resume: false`), so it is queued and not sent to a model. It is also logged as `[jevcode] /jev: true` (info level; the question text is not logged).
 
 ## Jev providers and keys
 
