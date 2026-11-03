@@ -1991,3 +1991,20 @@
     - specs/jev-code-router/tickets/0008-qa-e2e-and-publish-readiness.yaml
     - specs/jev-code-router/tickets/0009-jev-assisted-compaction.yaml
     - specs/jev-code-router/tickets/0010-routing-analytics.yaml
+- datetime: 2026-11-03 16:57
+  title: 'README: set TYPESAFE_API_KEY on the OpenCode service'
+  tags:
+    - docs
+    - README
+    - security
+  change: >-
+    Jev providers and keys now explains that shell exports do not reach the background service, and shows `opencode
+    service set env TYPESAFE_API_KEY <your-api-key>` (and the same form for OPENROUTER_API_KEY).
+  reason: >-
+    Plugins run in the shared OpenCode service, so a shell env var is not visible to the plugin unless it is set on the
+    service.
+  invariant: >-
+    README must not contain real secrets; key setup must tell users to set env on the OpenCode service, not only in the
+    shell, and must not recommend committing keys in opencode.jsonc.
+  files:
+    - README.md

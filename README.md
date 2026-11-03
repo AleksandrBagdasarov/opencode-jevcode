@@ -119,14 +119,20 @@ Key lookup (when the `apiKey` option is not set):
   TypeSafe unless it starts with `sk-or-` or `endpoint` contains `openrouter`.
 
 **Put keys in environment variables, not in config files you commit.** The plugin never logs keys (they are masked
-in every log line). Example:
+in every log line).
+
+The plugin runs inside the OpenCode **background service**, not inside the shell where you typed `opencode`. A
+PowerShell `$env:` assignment or a bash `export` only reaches a process you start yourself (for example
+`opencode --standalone`). It does **not** reach the shared service, so Jev still sees no key.
+
+Set the variable on the service:
 
 ```sh
-# PowerShell
-$env:TYPESAFE_API_KEY = "<your key>"
-# bash
-export TYPESAFE_API_KEY="<your key>"
+opencode service set env TYPESAFE_API_KEY <your-api-key>
 ```
+
+Same form for OpenRouter: `opencode service set env OPENROUTER_API_KEY <your-api-key>`. Do not put the key in
+`opencode.jsonc`.
 
 ## Options
 
