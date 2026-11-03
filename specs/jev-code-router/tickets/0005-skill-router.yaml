@@ -1,0 +1,112 @@
+title: 'Phase 3: skill selection and injection into prompt.skills'
+status: closed
+depends:
+  - 0004-model-router-and-prompt-hook.yaml
+tags:
+  - BE
+  - QA
+next_responsibility: PM
+scope: >-
+  src/router/skill-router.ts, additions to src/jev/questions.ts and the stage A batch in
+  prompt-hook, tests. Out of scope: tool groups, pruning.
+description: >-
+  Implements story R3. Build the skill catalog from ctx.skill.list() (id, description, short
+  capability text). Prefilter lexically to at most 30 skills. Add one `noul` question per
+  shortlisted skill to the stage A batched request. Select skills with probability >=
+  skillThreshold, at most maxSkills, ordered by probability. Validate each id against
+  ctx.skill.list() and push `{ id }` into event.prompt.skills, skipping skills the user already
+  selected. Never copy skill Markdown into the system prompt.
+notes: >-
+  Skill attachments are objects {id, mention?}, not strings (design F5). Feature.md called the
+  yes/no primitive Noul; OpenCode native calls it predicate.
+
+  [2026-11-03T15:09:20.907Z] CRITERION 0 false → true: Selected skills appear in event.prompt.skills
+  as {id} objects; ids not present in ctx.skill.list() are never added (unit test with hostile
+  answers)
+
+  [2026-11-03T15:09:21.282Z] CRITERION 1 false → true: No duplicates when the user already selected
+  a skill; maxSkills and skillThreshold are honoured (unit tests)
+
+  [2026-11-03T15:09:21.785Z] CRITERION 2 false → true: The skill questions are part of the same
+  single Jev request as the model question (stub client asserts exactly one ask() call per prompt)
+
+  [2026-11-03T15:09:22.283Z] CRITERION 3 false → true: Lexical prefilter caps the shortlist at 30
+  and keeps skills whose name/description overlaps the prompt (unit test with 100 skills)
+
+  [2026-11-03T15:09:22.784Z] CRITERION 4 false → true: With zero skills, or on Jev failure, the
+  prompt is left untouched
+
+  [2026-11-03T15:09:23.213Z] CRITERION 5 false → true: Non-jev agents never get skills added
+  (isolation test)
+
+  [2026-11-03T15:09:28.302Z] HAND-OFF BE → QA: Implemented src/router/skill-router.ts
+  (StageAContributor "skills"), skillQuestion/SKILL_QUESTION_PREFIX in src/jev/questions.ts,
+  registered in promptHookModule (after the model router; createPromptHook unchanged). bun test: 231
+  pass / 12 skip / 0 fail; tsc --noEmit clean. All 6 AC toggled. Behaviour for QA: catalog from
+  ctx.skill.list() ({data} or array; capability line = first prose paragraph of content, only first
+  2000 chars scanned, never sent in full); skipped when maxSkills=0, empty prompt, no skills, list
+  failure/timeout; skills the user already attached get no question and are re-checked at apply
+  time; <=30 skills all asked, >30 only skills sharing a word stem with the prompt (name hit 3,
+  description 1), max 30, none matching => no skill questions; selection = noul prob (clamped) >=
+  skillThreshold, ids restricted to the shortlist, best first, <= maxSkills, pushed last as {id}
+  into event.prompt.skills; plan.skills = only ids the plugin added. Known limits: no opt-in
+  integration test (ticket did not ask; a real run needs a skill installed and a Jev answer for
+  skill:<id>); lexical prefilter can miss purely semantic matches when the catalog has >30 skills;
+  the routing note listing skills (R6.4) belongs to ticket 0006.
+
+  [2026-11-03T15:11:30.982Z] HAND-OFF QA → BE: QA 0005: all 6 AC verified (bun test 231 pass/12
+  skip/0 fail; tsc clean; code review of skill-router.ts OK: closed-set ids, no dups,
+  threshold/maxSkills, one batched request, prompt untouched on Jev/list failure, non-jev
+  isolation). Real opencode 2.2.5 probe (temp test, deleted): with Jev mock answering every question
+  (skill:decisions=0.95) the agent model request carried the decisions skill content (44KB vs 2KB
+  title request) and model m-big applied; so injection into prompt.skills works. DEFECT (regression
+  in opt-in suite, not an AC): OPENCODE_INTEGRATION=1 bun test -> 1 fail:
+  tests/integration/prompt-hook.int.test.ts 'jevCode prompt: Jev's choice is applied...' expects
+  m-big, got m-small. Cause: the host lists the user's 9 real skills (opencode, report, browser,
+  decisions, ...), so the single Jev request now has model + 9 skill:* questions, but the mock Jev
+  answers only 'model'; client finalize() (src/jev/client.ts:101) returns null on any missing
+  question, so the whole routing falls back. Repro: OPENCODE_INTEGRATION=1 bun test
+  tests/integration/prompt-hook.int.test.ts. Fix (test only): make the mock Jev answer every asked
+  question (noul wire shape {type:'noul', noul:p}; e.g. low p for all skill:*), ideally also assert
+  skill injection with a project-local skill so the e2e is deterministic and independent of the
+  user's global skills. Strict finalize() is by design; keep. After the e2e is green, hand back to
+  QA/PM (AC already toggled true; I did not change them).
+
+  [2026-11-03T15:12:41.086Z] HAND-OFF BE → QA: QA defect fixed (test-only; src untouched).
+  tests/integration/prompt-hook.int.test.ts: mock Jev answers every asked question (model->m-big,
+  skill:* low noul 0.05, project-local skill 'jev-e2e-skill' 0.95, other noul 0.95); spawned
+  opencode uses isolated HOME/USERPROFILE/XDG_* (user's 9 global skills gone; only built-ins
+  opencode/report/browser remain); new assertions: skill:jev-e2e-skill question is asked and its
+  SKILL.md marker appears in a model request (injection verified on real opencode).
+  OPENCODE_INTEGRATION=1 bun test tests/integration: 8 pass, 0 fail (no 0006-related failures seen).
+  Please re-verify.
+
+  [2026-11-03T15:16:35.304Z] HAND-OFF QA → PM: QA re-verify OK. bun test 271 pass/17 skip/0 fail;
+  OPENCODE_INTEGRATION=1 bun test 282 pass/0 fail (real opencode 2.2.5: skill questions asked incl.
+  project-local jev-e2e-skill, 1 Jev request, m-big applied, restore/build/jev-down OK); tsc
+  --noEmit clean. All 6 AC remain true. Earlier e2e defect fixed (test-only). No BOM. Residual:
+  lexical prefilter can miss purely semantic matches with >30 skills (documented). PM may close.
+
+  [2026-11-03T15:16:52.644Z] HAND-OFF PM → PM: PM close: QA re-verify OK, 6/6 AC done (bun test 271
+  pass, integration 282 pass, tsc clean).
+acceptance_criteria:
+  - description: >-
+      Selected skills appear in event.prompt.skills as {id} objects; ids not present in
+      ctx.skill.list() are never added (unit test with hostile answers)
+    done: true
+  - description: >-
+      No duplicates when the user already selected a skill; maxSkills and skillThreshold are
+      honoured (unit tests)
+    done: true
+  - description: >-
+      The skill questions are part of the same single Jev request as the model question (stub client
+      asserts exactly one ask() call per prompt)
+    done: true
+  - description: >-
+      Lexical prefilter caps the shortlist at 30 and keeps skills whose name/description overlaps
+      the prompt (unit test with 100 skills)
+    done: true
+  - description: With zero skills, or on Jev failure, the prompt is left untouched
+    done: true
+  - description: Non-jev agents never get skills added (isolation test)
+    done: true

@@ -1,7 +1,6 @@
 /**
- * Per-session state. This file currently holds ONLY the model-restore memory (story R1.5, design
- * "Isolation and restore"). A later ticket adds the turn-plan cache to this file; keep that logic
- * separate from `createRestoreMemory` and the restore functions below.
+ * Per-session state: the model-restore memory (story R1.5, design "Isolation and restore") and, in a
+ * separate section further down, the in-memory turn-plan cache (R6.2/R6.3). Keep the two apart.
  *
  * Nothing exported here throws: hooks call these on the hot path and must fail open.
  */
@@ -185,6 +184,50 @@ export async function restoreIfNeeded(
     log?.warn("model restore failed:", err);
     return "failed";
   }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Turn-plan cache (design section 4/5, story R6.2/R6.3). Kept separate from the restore memory above.
+// In memory only: a plan is valid for one prompt, never needs to survive a restart, and the context hook
+// (ticket 0006) validates `turnKey` against the latest user message before using it.
+// ---------------------------------------------------------------------------------------------
+
+/** At most this many sessions keep a plan; the oldest-inserted is evicted first. */
+export const PLAN_CACHE_MAX_SESSIONS = 200;
+
+export interface PlanCache<P extends { sessionID: string; turnKey: string }> {
+  /** Replaces any plan of the same session (a new prompt = a new plan). */
+  set(plan: P): void;
+  get(sessionID: string): P | undefined;
+  /** The plan only when it belongs to `turnKey`; stale or missing => undefined. */
+  getForTurn(sessionID: string, turnKey: string): P | undefined;
+  delete(sessionID: string): void;
+  size(): number;
+}
+
+export function createPlanCache<P extends { sessionID: string; turnKey: string }>(
+  maxSessions: number = PLAN_CACHE_MAX_SESSIONS,
+): PlanCache<P> {
+  const plans = new Map<string, P>();
+  return {
+    set(plan) {
+      // Re-insert so the replaced session counts as most recent.
+      plans.delete(plan.sessionID);
+      plans.set(plan.sessionID, plan);
+      while (plans.size > Math.max(1, maxSessions)) {
+        const oldest = plans.keys().next().value;
+        if (oldest === undefined) break;
+        plans.delete(oldest);
+      }
+    },
+    get: (sessionID) => plans.get(sessionID),
+    getForTurn(sessionID, turnKey) {
+      const plan = plans.get(sessionID);
+      return plan && plan.turnKey === turnKey ? plan : undefined;
+    },
+    delete: (sessionID) => void plans.delete(sessionID),
+    size: () => plans.size,
+  };
 }
 
 /**

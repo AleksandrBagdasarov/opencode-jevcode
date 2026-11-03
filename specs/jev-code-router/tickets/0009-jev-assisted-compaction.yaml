@@ -1,0 +1,30 @@
+title: 'Phase 6 (Later): Jev-assisted compaction hook'
+status: depend
+depends:
+  - 0007-context-router-and-pruning.yaml
+tags:
+  - BSA
+  - TL
+  - BE
+next_responsibility: TL
+scope: 'Compaction hook only, jevCode agent only. Backlog: not part of v0.1.'
+description: >-
+  Implements story R8. In the `compaction` hook (guarded by isJevAgent) use units/scoring from 0007
+  so Jev selects what must survive and OpenCode's normal compaction model still writes the summary.
+  Needs design: how to pass the keep set to the summary request without setting event.result.
+notes: >-
+  Later priority per feature.md roadmap. Created as backlog so scope is visible.
+
+  [2026-11-03T15:43:07.997Z] HAND-OFF PM → TL: PM decision: deferred to post-v0.1 (explicit 'Later'
+  phase). Do not start. TL reports design not ready. Before restart: (1) TL runs a probe of the
+  OpenCode compaction hook, (2) BSA fleshes out R8.1 requirements and AC, (3) PM re-prioritises
+  after v0.1.1 feedback.
+acceptance_criteria:
+  - description: >-
+      Design addendum written by TL describing how the selected context influences the compaction
+      request
+    done: false
+  - description: Compaction hook is a no-op for non-jev agents (isolation test)
+    done: false
+  - description: Jev failure leaves compaction unchanged
+    done: false

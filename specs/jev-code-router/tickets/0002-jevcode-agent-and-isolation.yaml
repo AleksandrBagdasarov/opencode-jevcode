@@ -1,0 +1,121 @@
+title: 'Phase 1: jevCode agent registered by the plugin, agent isolation, model restore'
+status: closed
+depends:
+  - 0001-package-scaffold-and-config.yaml
+tags:
+  - BE
+  - QA
+next_responsibility: PM
+scope: >-
+  src/agent/*, src/state/session-state.ts (restore memory only), agents/jevCode.md, tests. Out of
+  scope: Jev calls, model selection logic, skills, tools, pruning.
+description: >-
+  Implements story R1 and design D2/D8. Register the agent with ctx.agent.transform using
+  editor.update("jevCode", ...) (verified upsert, design F2): description, mode primary, system
+  prompt from feature.md section 2, color, optional agentModel, and a copy of build's permissions
+  taken at transform time (never widened). Make the transform idempotent (it replays on reload). Add
+  a canary after setup: ctx.agent.list() must contain jevCode, otherwise log an error and, when
+  agentFileFallback is true, write .opencode/agents/jevCode.md from the packaged agents/jevCode.md
+  (create dirs, never overwrite an existing file). When makeDefault is true also call
+  editor.default("jevCode"). Provide isJevAgent(id) and resolveSessionAgent(ctx, sessionID)
+  (session.get().agent; unset => jev only when makeDefault). Provide the restore memory in
+  ctx.storage: remember {previous, applied} per session and restore on the next prompt to a non-jev
+  agent only if the session model still equals applied.
+notes: >-
+  Key research artifact: probe plugin at
+  C:\Users\sasha\AppData\Local\Temp\opencode\probe-proj\.opencode\plugins\probe\index.ts showed the
+  upsert behaviour. The upsert is undocumented: the canary and the pinned test are mandatory.
+
+  [2026-11-03T14:56:32.230Z] CRITERION 0 false → true: After plugin load against the real opencode
+  2.2.5 binary, `opencode --standalone api get /api/agent` lists jevCode with mode primary and a
+  non-empty system prompt (integration test or documented script with captured output)
+
+  [2026-11-03T14:56:32.767Z] CRITERION 1 false → true: jevCode permissions deep-equal build's
+  permissions at registration time (unit test with a fake AgentEditor)
+
+  [2026-11-03T14:56:33.303Z] CRITERION 2 false → true: Registration callback is idempotent: running
+  the transform twice yields one agent definition
+
+  [2026-11-03T14:56:33.869Z] CRITERION 3 false → true: Canary logs a clear error and does not throw
+  when jevCode is missing; with agentFileFallback=true it writes agents/jevCode.md content to
+  .opencode/agents/jevCode.md and never overwrites an existing file (unit tests with temp dir)
+
+  [2026-11-03T14:56:34.399Z] CRITERION 4 false → true: isJevAgent returns true only for the exact id
+  jevCode; resolveSessionAgent honours makeDefault for an unset session agent (unit tests)
+
+  [2026-11-03T14:56:34.943Z] CRITERION 5 false → true: Restore logic: switches back to previous
+  model only when current session model equals applied; clears memory when the user changed the
+  model manually; clears memory for sessions that return to jevCode (unit tests with fake ctx)
+
+  [2026-11-03T14:56:35.401Z] CRITERION 6 false → true: agents/jevCode.md is valid agent Markdown
+  with frontmatter (description, mode: primary) and body matching the in-plugin system prompt
+
+  [2026-11-03T14:56:40.305Z] HAND-OFF BE → QA: BE verification done, 7/7 AC toggled. `bun test` =
+  146 pass, 0 fail with OPENCODE_INTEGRATION=1 (148 tests, 6 skipped without it); `tsc --noEmit`
+  clean. FIX: the integration test initially FAILED (jevCode not listed). Cause: package.json had a
+  UTF-8 BOM (added with the publisher metadata via PowerShell), and OpenCode 2.2.5 silently skips a
+  plugin whose package.json has a BOM (no load log, no error). BOM stripped from package.json and
+  README.md; keep them BOM-free. Notes for QA: (1) AC6 'clears memory for sessions that return to
+  jevCode' is implemented as reconcileOnJevPrompt: it clears only STALE memory (user changed the
+  model meanwhile) and keeps it when the session is still on the applied model, so the user's
+  original model is not lost when they Tab away and back; this is a deliberate reading of R1.5 (see
+  decision 'Model restore memory and logic'). (2) Plugin console output is not forwarded by
+  `opencode --standalone api get`, so the canary log is not assertable there; evidence is the
+  /api/agent listing. (3) Project plugins must be given as absolute path in the `plugins` array of
+  opencode.jsonc. (4) Real-binary integration run: `$env:OPENCODE_INTEGRATION=1; bun test
+  tests/integration`.
+
+  [2026-11-03T14:57:16.922Z] HAND-OFF QA → PM: QA verified 7/7 AC. Evidence: `bun test` = 142 pass /
+  6 skip / 0 fail. `OPENCODE_INTEGRATION=1 bun test` = 146 pass / 0 fail, including the real
+  opencode 2.2.5 agent integration test. `bunx tsc --noEmit` exit 0. Code review of
+  src/agent/register.ts and src/state/session-state.ts found no defects. package.json starts with
+  `{` (bytes 7B 0D 0A) and README.md starts with `# o`. Neither has a BOM. agents/jevCode.md has
+  valid frontmatter (description, mode: primary) and its body matches the drift test. AC6 (restore)
+  NEEDS A PM DECISION. Restore itself matches story R1.5 and design D8. The code restores only when
+  the session model equals applied. It clears the memory without switching when the user changed the
+  model. The literal AC wording differs: 'clears memory for sessions that return to jevCode'. The
+  code clears that memory only when it is stale (user changed model). It keeps it when the session
+  is still on the applied model, via reconcileOnJevPrompt and planRemember. This avoids losing the
+  user's original model on a Tab away and back. Neither story nor design requires clearing in that
+  case, so QA accepts the intent. Please confirm that reading, or ask BSA to reword the AC. Residual
+  risks: (1) the undocumented AgentEditor.update upsert is covered only by the canary and the opt-in
+  integration test. (2) Plugin stderr is not visible via `opencode --standalone api get`, so canary
+  logs cannot be asserted there. (3) Hook wiring of restoreIfNeeded and reconcileOnJevPrompt belongs
+  to a later ticket (prompt hook) and was not verified here. Ticket left open for PM to close.
+
+  [2026-11-03T14:57:45.278Z] HAND-OFF PM → PM: QA verified all 7 AC. PM decision: accept the
+  implementation's reading of the restore AC (clear memory when stale, keep it while the session is
+  still on the applied model; story R1.5, design D8). AC wording updated to match; done:true kept.
+  Closing.
+acceptance_criteria:
+  - description: >-
+      After plugin load against the real opencode 2.2.5 binary, `opencode --standalone api get
+      /api/agent` lists jevCode with mode primary and a non-empty system prompt (integration test or
+      documented script with captured output)
+    done: true
+  - description: >-
+      jevCode permissions deep-equal build's permissions at registration time (unit test with a fake
+      AgentEditor)
+    done: true
+  - description: 'Registration callback is idempotent: running the transform twice yields one agent definition'
+    done: true
+  - description: >-
+      Canary logs a clear error and does not throw when jevCode is missing; with
+      agentFileFallback=true it writes agents/jevCode.md content to .opencode/agents/jevCode.md and
+      never overwrites an existing file (unit tests with temp dir)
+    done: true
+  - description: >-
+      isJevAgent returns true only for the exact id jevCode; resolveSessionAgent honours makeDefault
+      for an unset session agent (unit tests)
+    done: true
+  - description: >-
+      Restore logic: switches back to previous model only when current session model equals applied;
+      clears memory when the user changed the model manually; for sessions that return to jevCode,
+      clears memory only when it is stale (session model no longer equals applied) and keeps it
+      while the session is still on the applied model, so the original model is not lost (R1.5, D8;
+      unit tests with fake ctx)
+    done: true
+  - description: >-
+      agents/jevCode.md is valid agent Markdown with frontmatter (description, mode: primary) and
+      body matching the in-plugin system prompt
+    done: true

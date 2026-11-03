@@ -1,0 +1,114 @@
+title: 'Phase 4: tool group routing and the context hook (stage B shell, system note)'
+status: closed
+depends:
+  - 0004-model-router-and-prompt-hook.yaml
+tags:
+  - BE
+  - QA
+next_responsibility: PM
+scope: >-
+  src/router/tool-groups.ts, src/router/tool-router.ts, src/opencode/context-hook.ts, tests. Out of
+  scope: message pruning (0007) except leaving the extension point.
+description: >-
+  Implements story R4, R6.2-R6.4 and design F7. Define tool groups (Exploration:
+  read/grep/glob/list; Development: edit/write/patch; Execution: shell/terminal; Verification:
+  test/lsp; Research: websearch/webfetch; Delegation: subagent/task; Database: MCP tools matching
+  configurable patterns; Other) as ID patterns in tool-groups.ts, user-extensible by option. Add one
+  `noul` per group (probability the group is needed) to the stage A batch; groups below
+  toolThreshold become excluded. The context hook registers once, returns immediately unless
+  event.agent === "jevCode", loads the cached plan (validating turnKey against the latest user
+  message), deletes tools of excluded groups from event.tools, and appends a short routing note to
+  event.system. Never delete: alwaysKeepTools, tools referenced by tool-call parts in
+  event.messages, tools in unknown groups. If filtering would empty the tool set, delete nothing.
+  The hook makes no Jev call on continuations.
+notes: >-
+  Tool removal is a request-shaping optimization only; permission system remains the security
+  boundary (story R4.4). Can be developed in parallel with 0005 (different files, both extend the
+  stage A batch via the question builders).
+
+  [2026-11-03T15:15:47.550Z] CRITERION 0 false → true: Excluded groups' tools are removed from
+  event.tools; alwaysKeepTools, tools referenced by messages in the request, and ungrouped tools are
+  never removed (unit tests)
+
+  [2026-11-03T15:15:48.099Z] CRITERION 1 false → true: If the exclusion would remove every tool,
+  event.tools is unchanged (unit test)
+
+  [2026-11-03T15:15:48.636Z] CRITERION 2 false → true: Context hook for agent build changes nothing
+  and calls nothing (isolation test asserting deep-equal event before/after)
+
+  [2026-11-03T15:15:49.162Z] CRITERION 3 false → true: Continuation calls (same turnKey) make zero
+  Jev calls and re-apply the same filtering (stub client call count)
+
+  [2026-11-03T15:15:49.697Z] CRITERION 4 false → true: A stale or missing plan (turnKey mismatch)
+  results in the fallback behaviour: all tools kept, no system note beyond the minimal one
+
+  [2026-11-03T15:15:50.230Z] CRITERION 5 false → true: Routing note is short (<= 600 chars), lists
+  selected skills and available groups, and is appended to event.system without modifying existing
+  parts (unit test)
+
+  [2026-11-03T15:15:50.667Z] CRITERION 6 false → true: OpenCode permission rules are not read or
+  modified anywhere in this code path (grep-able: no permission API usage)
+
+  [2026-11-03T15:15:57.445Z] HAND-OFF BE → QA: Implemented: src/router/tool-groups.ts (groups + glob
+  matcher), src/router/tool-router.ts (stage-A noul per group `tools:<group>`; below toolThreshold
+  => excluded, unanswered/NaN => kept; selectToolRemovals), src/opencode/context-hook.ts (stage B
+  shell: jev-only, plan via getForTurn on latest user message id or text-hash key, ContextStage[]
+  extension point for 0007 pruning, tool deletion, routing note <=600 chars appended as a NEW system
+  part, never twice; no Jev client in this hook, so continuations never call Jev). Registered tool
+  router in promptHookModule and contextHookModule in MODULES. New option `toolGroups` ({name:
+  [globs]}, additive to built-ins; Database defaults are *postgres*, *mysql*, *sqlite*, *mongo*,
+  *database*, *redis*...; Other has no defaults) in config.ts - please add to README/design options
+  (TL/BSA). Tests: tests/router/tool-router.test.ts, tests/router/context-hook.test.ts (bun test:
+  282 pass; tsc clean). Opt-in e2e tests/integration/context-hook.int.test.ts passes on opencode
+  2.2.5 (OPENCODE_INTEGRATION=1): keep-all run sends
+  edit/glob/grep/question/read/shell/skill/subagent/webfetch/websearch/write/execute + note;
+  Exploration-only run sends glob/grep/question/read/skill/execute + note with 'left out'; build
+  prompt untouched, zero Jev requests. Findings for QA: the real context event's latest user message
+  key matches the prompt hook's turnKey (plan applied); ungrouped host tools (question, skill,
+  execute) are never removed; shared Jev client hoist was not needed (context hook makes no Jev
+  call; do it in 0007). Limitations: tool groups are asked even if the host has no tools of that
+  group (cheap, answered in the same batch); with no usable tool answers the plan keeps all tools;
+  note wording is English only. Note: another session edited
+  tests/integration/prompt-hook.int.test.ts in parallel (0005); my only edit there was reverted.
+
+  [2026-11-03T15:16:38.377Z] HAND-OFF QA → PM: QA OK, all 7 AC verified. bun test 271 pass/17 skip/0
+  fail; OPENCODE_INTEGRATION=1 282 pass/0 fail (e2e on opencode 2.2.5: keep-all sends full toolset +
+  note; Exploration-only removes edit/write/shell/subagent/web* but keeps ungrouped
+  question/skill/execute; build untouched, 0 Jev calls); tsc clean. Code review: context hook
+  returns first for non-jev agents, whole body in try/catch (never throws), no Jev client,
+  stale/missing plan => fallbackPlan (minimal note, all tools), removals atomic w/ restore, never
+  removes alwaysKeep/referenced/ungrouped or all tools, note <=600 chars appended as new part once;
+  grep 'permission' in src hits only src/agent/definition.ts (agent draft, not the tool path); no
+  BOM in src/tests. Note: stderr noise 'ctx.session.hook undefined' in tests comes from module-init
+  failure tests with fake ctx (expected fail-open logs). Residual: groups asked even if host has
+  none; English-only note. PM may close.
+
+  [2026-11-03T15:16:53.385Z] HAND-OFF PM → PM: PM close: QA OK, 7/7 AC done (bun test 271 pass,
+  integration 282 pass, tsc clean).
+acceptance_criteria:
+  - description: >-
+      Excluded groups' tools are removed from event.tools; alwaysKeepTools, tools referenced by
+      messages in the request, and ungrouped tools are never removed (unit tests)
+    done: true
+  - description: If the exclusion would remove every tool, event.tools is unchanged (unit test)
+    done: true
+  - description: >-
+      Context hook for agent build changes nothing and calls nothing (isolation test asserting
+      deep-equal event before/after)
+    done: true
+  - description: >-
+      Continuation calls (same turnKey) make zero Jev calls and re-apply the same filtering (stub
+      client call count)
+    done: true
+  - description: >-
+      A stale or missing plan (turnKey mismatch) results in the fallback behaviour: all tools kept,
+      no system note beyond the minimal one
+    done: true
+  - description: >-
+      Routing note is short (<= 600 chars), lists selected skills and available groups, and is
+      appended to event.system without modifying existing parts (unit test)
+    done: true
+  - description: >-
+      OpenCode permission rules are not read or modified anywhere in this code path (grep-able: no
+      permission API usage)
+    done: true

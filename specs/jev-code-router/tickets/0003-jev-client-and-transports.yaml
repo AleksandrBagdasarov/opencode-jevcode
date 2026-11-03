@@ -1,0 +1,124 @@
+title: 'Provider-neutral Jev client: question model, three transports, fail-open'
+status: closed
+depends:
+  - 0001-package-scaffold-and-config.yaml
+tags:
+  - BE
+  - QA
+next_responsibility: PM
+scope: >-
+  src/jev/* and tests. Out of scope: building the actual routing questions (done by router tickets)
+  and any OpenCode hook code.
+description: >-
+  Implements story R7 and design D4. Define internal types in src/jev/types.ts: Question = choice
+  {options: Record<string,string>} | noul {instructions} | score {levels: string[]}; Answer = choice
+  {choice, confidence, probabilities} | noul {probability} | score {score, confidence} | error.
+  Implement `JevClient.ask(state, questions): Promise<Answers | null>` that picks a transport from
+  `provider` (auto: native decision model from ctx.model.list() with type "decision" ->
+  TYPESAFE_API_KEY -> OPENROUTER_API_KEY -> none). Transports: native
+  (ctx.experimental.generate.decisions; noul->predicate, choice->choices[], score->levels[]),
+  typesafe (POST https://api.typesafe.ai/v1/systemone, Bearer key, model jev-latest, noul/choice
+  criteria map/score criteria[]), openrouter (POST https://openrouter.ai/api/alpha/decisions,
+  default model typesafe/jev-1.13). Enforce limits (choice <= 255 options, score <= 10 levels),
+  timeout via AbortController, one retry on network/5xx, return null on any failure, truncate state
+  to a size cap. src/jev/response.ts offers closed-set validation helpers (pickChoice(answer,
+  allowed, minConfidence), noulAbove(answer, t)). Log a single notice when no transport is
+  available.
+notes: >-
+  Upstream docs: https://docs.typesafe.ai/api/system-one.md and OpenCode types in @opencode/client
+  (ExperimentalGenerateDecisionsInput). Can run in parallel with 0002.
+
+  [2026-11-03T14:35:01.617Z] CRITERION 0 false → true: Unit tests with a mocked fetch prove each
+  HTTP transport sends the documented request shape (endpoint, Authorization header, body with
+  model/state/questions) and parses documented sample responses for noul, choice and score
+
+  [2026-11-03T14:35:02.152Z] CRITERION 1 false → true: Native transport maps noul->predicate,
+  choice->choices, score->levels and parses predicate/choice/score/error answers (unit test with a
+  fake ctx.experimental.generate.decisions)
+
+  [2026-11-03T14:35:02.685Z] CRITERION 2 false → true: provider=auto selection order is native
+  decision model, typesafe key, openrouter key, none (unit tests, including TYPESAFE_API_KEY winning
+  over OPENROUTER_API_KEY)
+
+  [2026-11-03T14:35:03.217Z] CRITERION 3 false → true: ask() returns null and never throws on:
+  timeout, network error, HTTP 4xx/5xx, invalid JSON, answers missing a requested question, and a
+  transport that throws synchronously
+
+  [2026-11-03T14:35:03.716Z] CRITERION 4 false → true: Timeout is honoured within 100 ms of
+  timeoutMs in a test using a never-resolving fetch
+
+  [2026-11-03T14:35:04.253Z] CRITERION 5 false → true: pickChoice rejects values not in the allowed
+  set and values below minConfidence; noul helpers clamp to 0..1 (unit tests)
+
+  [2026-11-03T14:35:04.690Z] CRITERION 6 false → true: API key never appears in thrown/logged
+  messages (test with a logger spy)
+
+  [2026-11-03T14:35:09.722Z] HAND-OFF BE → QA: BE done. src/jev/{types,client,response,questions}.ts
+  + transports/{http,typesafe,openrouter,native}.ts; tests/jev/{transports,client,response}.test.ts
+  (52 tests, all pass; typecheck clean). API: createJevClient({options: Resolved, log, fetch?,
+  listModels?, generateDecisions?, now?}) -> {ask(state, questions): Promise<Answers|null>,
+  describe()}. Helpers: pickChoice(answer, allowed, minConf), noulProbability(answer),
+  rankNoul(answers, prefix, threshold), scoreValue(answer, max); builders
+  choiceQuestion/noulQuestion/scoreQuestion(instructions, ...). Semantics: partial success returns
+  only usable answers (absent key = unanswered); a requested question missing from the response, or
+  all-error answers => null. Limits: choice 1..255 options, score 2..10 levels, state cap
+  STATE_MAX_CHARS=12000 (truncated string beyond). One deadline (timeoutMs) shared by
+  resolution+attempt+retry; retry once only on network/5xx. Auto with apiKey option: typesafe unless
+  key starts sk-or- or endpoint contains openrouter. Re-resolve after none at most every 60s.
+  Caveats: (1) tests/entry.test.ts currently fails (expects MODULES == []) because the other BE's
+  index.ts now registers an "agent" module - not from this ticket, entry test needs updating by 0002
+  owner. (2) Native transport passes {signal} as 2nd arg to generateDecisions and uses ModelInfo.id
+  as model id (not verified against a live decision model; none installed). (3) Score numeric scale
+  is passed through as returned by Jev (use scoreValue to clamp).
+
+  [2026-11-03T14:54:28.110Z] HAND-OFF QA → PM: QA PASS (all 7 AC verified; flags already done:true).
+  Evidence: `bun test` 142 pass / 0 fail (tests/jev/{transports,client,response}.test.ts included);
+  `bunx tsc --noEmit` exit 0. Independent probe against src/jev/client.ts: never-resolving fetch
+  with timeoutMs=300 -> null in 311 ms (within 100 ms); sync-throwing fetch, response missing a
+  requested question, invalid JSON and HTTP 500 -> null, no throw; key (also embedded in a thrown
+  error message) absent from logger output; env TYPESAFE_API_KEY + OPENROUTER_API_KEY -> typesafe
+  endpoint https://api.typesafe.ai/v1/systemone (typesafe wins). Code review: native request shape
+  matches @opencode/client 2.2.5 ExperimentalGenerateDecisionsInput (predicate/choice
+  choices[]/score levels[]); HTTP body {model,state,questions} with Bearer; limits 255/10; one retry
+  on network/5xx only; one-time fallback notice. Residual risks (non-blocking): native transport not
+  verified against a live decision model (none installed, as BE noted) - covered only by fake;
+  pickChoice/noul helpers are named pickChoice/noulProbability/rankNoul/scoreValue (ticket text
+  mentioned noulAbove) - AC satisfied since it requires clamping, not that name; HTTP transport
+  passes raw noul probability (e.g. 5) unclamped, callers must use noulProbability. Ready for PM to
+  close.
+
+  [2026-11-03T14:54:50.431Z] HAND-OFF PM → PM: PM CLOSE: QA pass reviewed. All 7/7 AC done:true.
+  Evidence: bun test 142 pass/0 fail, tsc --noEmit exit 0, independent probe (timeout 311 ms for 300
+  ms budget; fail-open on all error cases; key redacted; typesafe wins over openrouter). Accepted
+  residual risks: native transport only verified against a fake (no live decision model installed);
+  helper naming differs from ticket text (noulProbability vs noulAbove) but AC met; HTTP noul
+  probability is unclamped so callers must use noulProbability. Follow-up for router tickets
+  0004-0007: use the clamping helpers, and verify the native transport against a live decision model
+  during 0008 QA e2e.
+acceptance_criteria:
+  - description: >-
+      Unit tests with a mocked fetch prove each HTTP transport sends the documented request shape
+      (endpoint, Authorization header, body with model/state/questions) and parses documented sample
+      responses for noul, choice and score
+    done: true
+  - description: >-
+      Native transport maps noul->predicate, choice->choices, score->levels and parses
+      predicate/choice/score/error answers (unit test with a fake
+      ctx.experimental.generate.decisions)
+    done: true
+  - description: >-
+      provider=auto selection order is native decision model, typesafe key, openrouter key, none
+      (unit tests, including TYPESAFE_API_KEY winning over OPENROUTER_API_KEY)
+    done: true
+  - description: >-
+      ask() returns null and never throws on: timeout, network error, HTTP 4xx/5xx, invalid JSON,
+      answers missing a requested question, and a transport that throws synchronously
+    done: true
+  - description: Timeout is honoured within 100 ms of timeoutMs in a test using a never-resolving fetch
+    done: true
+  - description: >-
+      pickChoice rejects values not in the allowed set and values below minConfidence; noul helpers
+      clamp to 0..1 (unit tests)
+    done: true
+  - description: API key never appears in thrown/logged messages (test with a logger spy)
+    done: true

@@ -1,0 +1,90 @@
+title: Package scaffold, options parsing, logger and plugin entry skeleton
+status: closed
+depends: []
+tags:
+  - BE
+  - QA
+next_responsibility: PM
+scope: >-
+  Repo root of jevCode: package.json, tsconfig, test runner (bun test), src/index.ts, src/config.ts,
+  src/log.ts, README stub. Out of scope: any routing logic, agent registration, Jev calls.
+description: >-
+  Create the publishable package `opencode-jevcode` per design.md D1 and section 3. TypeScript
+  source is published as-is (`exports["."] = ./src/index.ts`), `@opencode/plugin` is a peer
+  dependency (>=2.2.0) and a pinned devDependency (2.2.5). `src/index.ts` exports `Plugin.define({
+  id: "jevcode", setup })` that parses options, creates the logger and wires modules that later
+  tickets add (each wired behind a try/catch so setup never throws). `src/config.ts` parses and
+  validates every option listed in design.md section 4 with safe defaults and clamping (thresholds
+  0..1, timeouts > 0) and reads env keys. `src/log.ts` is a leveled logger (`debug` option) that
+  redacts API keys.
+notes: >-
+  Created by openagent during decomposition. Requirements and design are already sufficient, so this
+  goes straight to BE (hand-off matrix exception). Decision-log rule: call specs_add_decision after
+  every file change.
+
+  [2026-11-03T14:29:10.114Z] CRITERION 0 false → true: package.json has name opencode-jevcode, type
+  module, exports pointing at src/index.ts, peerDependencies @opencode/plugin, files whitelist (src,
+  agents, README.md, LICENSE) and scripts: typecheck (tsc --noEmit), test (bun test)
+
+  [2026-11-03T14:29:10.644Z] CRITERION 1 false → true: `bun run typecheck` and `bun test` pass on a
+  clean checkout after `bun install`
+
+  [2026-11-03T14:29:11.185Z] CRITERION 2 false → true: src/config.ts returns a fully populated
+  Resolved options object from undefined, {} and invalid values (wrong types, out-of-range numbers)
+  without throwing; covered by unit tests
+
+  [2026-11-03T14:29:11.717Z] CRITERION 3 false → true: API keys are read from options or
+  TYPESAFE_API_KEY / OPENROUTER_API_KEY and never appear in log output (unit test on redaction)
+
+  [2026-11-03T14:29:12.253Z] CRITERION 4 false → true: Plugin setup never throws even when a wired
+  module throws (unit test with a failing module)
+
+  [2026-11-03T14:29:12.722Z] CRITERION 5 false → true: LICENSE (MIT) and README stub exist;
+  .npmignore or files whitelist excludes tests and specs
+
+  [2026-11-03T14:29:16.554Z] HAND-OFF BE → QA: Scaffold done. Files: package.json, tsconfig.json,
+  .gitignore, LICENSE, README.md, bun.lock, src/{index,setup,modules,config,log}.ts,
+  tests/{config,log,entry}.test.ts. Verify: `bun install; bun run typecheck` (exit 0); `bun test`
+  (38 pass / 0 fail); `npm pack --dry-run` lists only LICENSE, README.md, package.json, src/* (8
+  files, no tests/specs). Notes: extra files src/setup.ts (host-independent setupPlugin, testable
+  with fake ctx) and src/modules.ts (module registry) beyond design section 3; index.ts exports
+  `MODULES` (empty) for later tickets to append `{name, init(ctx, deps)}` entries; deps = {options:
+  Resolved, log: Logger, track(disposable|fn)}. Resolved has an extra `apiKeySource` field. Known
+  limits: agents/ dir not created yet (ticket 0002); `files` lists it already.
+
+  [2026-11-03T14:54:23.976Z] HAND-OFF QA → PM: QA PASS (all 6 AC verified; flags already done:true).
+  Evidence on Windows/bun 1.3.12: `bun test` 142 pass / 6 skip (opt-in integration) / 0 fail; `bunx
+  tsc --noEmit` exit 0; package.json has name, type module, exports ./src/index.ts, peerDep
+  @opencode/plugin >=2.2.0, files whitelist src/agents/README.md/LICENSE, scripts typecheck/test;
+  `npm pack --dry-run` = 22 files, no tests/specs/feature.md (*.tgz gitignored, none created);
+  LICENSE (MIT) + README present. src/config.ts reviewed: never throws (try/catch + defaults),
+  clamps 0..1, timeoutMs>0, env keys TYPESAFE/OPENROUTER; log.ts redacts registered secrets + key
+  patterns (verified with a probe: key absent from logs even in a thrown sync error). entry tests
+  cover a throwing/rejecting module. Residual risk (low): README is only a stub (full README is R10
+  / a later ticket); tests/entry.test.ts prints expected stderr noise from the minimal-ctx case.
+  Ready for PM to close.
+
+  [2026-11-03T14:54:48.678Z] HAND-OFF PM → PM: PM CLOSE: QA pass reviewed. All 6/6 AC done:true.
+  Evidence: bun test 142 pass/0 fail, tsc --noEmit exit 0, npm pack --dry-run excludes tests/specs.
+  Residual low risks accepted: README is a stub (full README belongs to a later ticket, R10),
+  expected stderr noise in tests/entry.test.ts.
+acceptance_criteria:
+  - description: >-
+      package.json has name opencode-jevcode, type module, exports pointing at src/index.ts,
+      peerDependencies @opencode/plugin, files whitelist (src, agents, README.md, LICENSE) and
+      scripts: typecheck (tsc --noEmit), test (bun test)
+    done: true
+  - description: '`bun run typecheck` and `bun test` pass on a clean checkout after `bun install`'
+    done: true
+  - description: >-
+      src/config.ts returns a fully populated Resolved options object from undefined, {} and invalid
+      values (wrong types, out-of-range numbers) without throwing; covered by unit tests
+    done: true
+  - description: >-
+      API keys are read from options or TYPESAFE_API_KEY / OPENROUTER_API_KEY and never appear in
+      log output (unit test on redaction)
+    done: true
+  - description: Plugin setup never throws even when a wired module throws (unit test with a failing module)
+    done: true
+  - description: LICENSE (MIT) and README stub exist; .npmignore or files whitelist excludes tests and specs
+    done: true

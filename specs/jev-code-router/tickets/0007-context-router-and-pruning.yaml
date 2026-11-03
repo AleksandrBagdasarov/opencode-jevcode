@@ -1,0 +1,127 @@
+title: 'Phase 5: context relevance selection and safe message pruning (stage B)'
+status: closed
+depends:
+  - 0006-tool-router-and-context-hook.yaml
+tags:
+  - BE
+  - QA
+next_responsibility: PM
+scope: >-
+  src/context/*, src/router/context-router.ts, wiring in context-hook, tests. Out of scope:
+  compaction (0008), analytics (0009).
+description: >-
+  Implements story R5 and design section 5 (units, invariants). message-groups.ts groups
+  event.messages into units with stable ids (message id when present, else index+hash), token
+  estimates and short summaries; each tool-call and its tool-result (matched by part id) are
+  indivisible. distiller.ts builds the compact ConversationState (objective, currentRequest,
+  activeFiles, completedWork, unresolvedIssues, contextCandidates) with size caps; collector.ts
+  extracts active files/completed work heuristically. token-budget.ts estimates tokens (chars/4) and
+  fits the keep-set to min(plan.maxTokens, model context * 0.6). context-router.ts asks Jev one
+  `score` question per unit (levels 0-4, units merged to <= 60) in a single request on the first
+  model call of a turn when the conversation is >= pruneMinTokens, selects units above the threshold
+  by score under budget, and always force-keeps: system messages, the latest user message and
+  everything after it, the last keepRecentMessages, compaction parts, and the first user message
+  (keepFirstUser). After pruning run a post-condition check: no orphan tool-call/tool-result,
+  otherwise discard the prune and use the original messages. Result is cached on the plan so
+  continuations only re-apply it (new messages created during the turn are always kept).
+notes: >-
+  This is the riskiest component; invest in tests. Jev selects and scores; code does the filtering.
+  Jev does not write summaries.
+
+  [2026-11-03T15:27:39.468Z] CRITERION 0 false → true: Property test (fast-check or seeded random
+  generator, >= 500 cases): for any generated conversation and any Jev selection, the pruned output
+  has no orphan tool-call or tool-result and contains every force-kept message
+
+  [2026-11-03T15:27:39.965Z] CRITERION 1 false → true: Pruning never mutates the input array or
+  messages in place beyond assigning event.messages (persisted history untouched; asserted by
+  deep-freezing inputs in tests)
+
+  [2026-11-03T15:27:40.647Z] CRITERION 2 false → true: Conversations below pruneMinTokens make zero
+  Jev calls and are not modified
+
+  [2026-11-03T15:27:41.033Z] CRITERION 3 false → true: First model call of a turn makes exactly one
+  Jev request; continuations make zero and re-apply the cached keep set; messages appended during
+  the turn are kept
+
+  [2026-11-03T15:27:41.557Z] CRITERION 4 false → true: Jev failure, null answer, or low confidence
+  results in the original messages being sent (fail open)
+
+  [2026-11-03T15:27:42.059Z] CRITERION 5 false → true: Distiller output stays under the configured
+  char cap for a 500-message conversation (unit test) and never includes full tool output bodies
+
+  [2026-11-03T15:27:42.516Z] CRITERION 6 false → true: Token-budget fit drops the lowest-scored
+  units first and never drops forced units even when over budget (unit test)
+
+  [2026-11-03T15:27:50.595Z] HAND-OFF BE → QA: All 7 AC implemented and toggled. Verified: `bun
+  test` 311 pass/17 skip, `OPENCODE_INTEGRATION=1 bun test` 326 pass/0 fail (opencode 2.2.5,
+  isolated HOME), `bunx tsc --noEmit` clean, no BOM. New:
+  src/context/{token-budget,collector,message-groups,prune,distiller}.ts,
+  src/router/context-router.ts (ContextStage "context-prune"), src/opencode/jev-client.ts (shared
+  client factory, used by prompt-hook and context-hook modules), questions.ts contextUnitQuestion
+  (score 0-4, names unit:<id>), wiring in contextHookModule (stage creation guarded). Tests:
+  tests/context/{gen,context.test,prune.property.test}.ts (600+600 seeded cases, deep-frozen
+  inputs), tests/router/context-router.test.ts, tests/integration/context-prune.int.test.ts (real
+  host: 1 message => no stage-B request; later turn => exactly one unit:* request, old topics absent
+  from model request when scored 0; next turn scored 4 => old topics present again = history
+  untouched; build => 0 Jev requests, full history). Behaviour for QA: only plans with source "jev"
+  are pruned; units = user message + answers, tool pairs indivisible (units merged across any id
+  spanning a boundary; oversized units split only at pair-free points, default 6000 tokens); forced:
+  system, leading msgs, latest user and after, last keepRecentMessages, compaction parts, first user
+  (keepFirstUser); keep score >= 2; unanswered/low-confidence (<contextMinConfidence) unit is KEPT,
+  if no confident answer at all => original messages; <=60 questions (newest 30 individual, older
+  merged as <firstId>+<n>); budget = min(plan.context.maxTokens, model window*0.6), unknown window
+  => no budget (plan.context.maxTokens 0); post-condition (no NEW orphan tool parts, forced + latest
+  tail present, first non-system role unchanged) else prune discarded. Decision memoised per plan
+  object (WeakMap + in-flight dedupe), so even a no-op first decision is not re-asked on
+  continuations. Flags for TL/PM: (1) TurnPlan.context gained optional droppedUnitIds (design
+  section 4 needs a mirror edit; TL); (2) keep-score threshold (2) and 6000-token unit cap are
+  constants, not options; (3) the distilled state cap is 9000 chars (< client 12000 truncation); (4)
+  stage B is skipped when plan.source is fallback, i.e. when stage A got no usable Jev answer.
+
+  [2026-11-03T15:28:42.901Z] HAND-OFF QA → PM: QA verified, all 7 AC already toggled true and
+  confirmed. Evidence: `bun test` 311 pass/23 skip/0 fail; `OPENCODE_INTEGRATION=1 bun test` 326
+  pass/0 fail (real opencode host); `bunx tsc --noEmit` exit 0; no BOM in src/ or tests/. Code
+  review of src/router/context-router.ts + src/context/prune.ts: (1) pairs never split: units merge
+  across any tool id spanning a boundary, and checkPrune rejects any NEW orphan, so a failed check
+  discards the prune; (2) forced messages (system, leading, latest user+tail, recent N, compaction,
+  first user) are never dropped and are re-verified by the post-condition; (3) fail-open: decide()
+  and apply() are fully try/catch'd, so a null/low-confidence/throwing Jev or a failed check returns
+  the original messages; (4) jevCode-only: isJevAgent gate in context-hook, plus
+  plan.source==='jev'; (5) input never mutated: applyDrop returns a new array of the same message
+  objects, and only event.messages is reassigned; the e2e shows history is untouched; (6) zero Jev
+  calls below pruneMinTokens and on continuations (decision memoised per plan, in-flight dedupe).
+  Residual notes (non-blocking, from BE): droppedUnitIds added to TurnPlan (TL to mirror in
+  design.md); keep-score 2 and 6000 unit cap are constants. Ready for PM to close.
+
+  [2026-11-03T15:28:55.411Z] HAND-OFF PM → PM: PM CLOSE: all 7 AC done, QA passed (bun test 311
+  pass, integration 326 pass, tsc clean). Follow-ups (non-blocking, not scope changes): TL to mirror
+  TurnPlan.context.droppedUnitIds into design.md section 4; keep-score threshold 2 and 6000-token
+  unit cap stay constants (revisit in 0010 if tuning is needed).
+acceptance_criteria:
+  - description: >-
+      Property test (fast-check or seeded random generator, >= 500 cases): for any generated
+      conversation and any Jev selection, the pruned output has no orphan tool-call or tool-result
+      and contains every force-kept message
+    done: true
+  - description: >-
+      Pruning never mutates the input array or messages in place beyond assigning event.messages
+      (persisted history untouched; asserted by deep-freezing inputs in tests)
+    done: true
+  - description: Conversations below pruneMinTokens make zero Jev calls and are not modified
+    done: true
+  - description: >-
+      First model call of a turn makes exactly one Jev request; continuations make zero and re-apply
+      the cached keep set; messages appended during the turn are kept
+    done: true
+  - description: >-
+      Jev failure, null answer, or low confidence results in the original messages being sent (fail
+      open)
+    done: true
+  - description: >-
+      Distiller output stays under the configured char cap for a 500-message conversation (unit
+      test) and never includes full tool output bodies
+    done: true
+  - description: >-
+      Token-budget fit drops the lowest-scored units first and never drops forced units even when
+      over budget (unit test)
+    done: true

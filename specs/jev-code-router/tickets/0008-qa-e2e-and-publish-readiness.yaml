@@ -1,0 +1,135 @@
+title: QA end-to-end on opencode 2.2.5 and publish readiness (README, tarball, install test)
+status: closed
+depends:
+  - 0005-skill-router.yaml
+  - 0006-tool-router-and-context-hook.yaml
+  - 0007-context-router-and-pruning.yaml
+tags:
+  - QA
+  - BE
+  - PM
+next_responsibility: PM
+scope: >-
+  tests/e2e/*, README.md, package metadata, `npm pack` verification. The actual `npm publish` needs
+  the owner's npm credentials and is a PM/owner action.
+description: >-
+  Implements story R10 and the feature-level acceptance. Build an e2e harness: a mock
+  OpenAI-compatible provider and a mock Jev (TypeSafe-shaped) HTTP server, a clean temp project with
+  opencode.jsonc referencing the packed tarball, and scripted runs against the opencode 2.2.5
+  binary. Verify the feature-level acceptance (jevCode switches model per Jev and shapes the
+  request; build is untouched and the previous model is restored; network off => jevCode behaves
+  like a plain agent). Write the README (install, options table, provider setup, how routing works,
+  privacy note on what is sent to Jev, troubleshooting incl. agentFileFallback and canary error) and
+  verify `npm pack --dry-run` contents.
+notes: >-
+  Credentials-free by design: the mock provider and mock Jev replace real models. Real-provider
+  smoke test is optional and owner-run.
+
+  [2026-11-03T15:08:08.102Z] HAND-OFF PM → QA: PM carry-over from closed 0004 for README/publish
+  readiness: (1) Recommend a `models` allowlist: without it only 12 candidates are offered (real
+  install has ~45 models; cap can hide a model). Document in README. (2) Document that plugin
+  entries in opencode config must be {package, options} objects, and that local plugin files must
+  live in .opencode/plugins/<name>/index.ts (a bare .ts in the plugins array is not loaded). (3)
+  package.json must have no BOM (verify in tarball check). Also note: fallbackModel option is unused
+  in stage A by design; document or remove from README.
+
+  [2026-11-03T15:08:10.354Z] HAND-OFF PM → QA: PM: status restored to new (the previous note
+  unintentionally set in progress). 0008 stays blocked on 0005/0006/0007.
+
+  [2026-11-03T15:16:54.390Z] HAND-OFF PM → QA: README must document: (1) the `toolGroups` option
+  (new in 0006); (2) lexical prefilter limit when more than 30 skills; (3) English-only routing
+  note; (4) integration tests need an isolated HOME.
+
+  [2026-11-03T15:41:15.946Z] CRITERION 0 false → true: E2E: after `opencode plugin add` (or plugins
+  entry with the packed tarball) /api/agent lists jevCode and the plugin loads without errors in the
+  server log
+
+  [2026-11-03T15:41:16.528Z] CRITERION 1 false → true: E2E: a jevCode prompt makes the mock provider
+  receive the model chosen by the mock Jev, with only the selected tools and the pruned messages
+
+  [2026-11-03T15:41:17.091Z] CRITERION 2 false → true: E2E: a build-agent prompt produces a request
+  identical to a run with the plugin disabled, and the pre-routing model is restored after switching
+  from jevCode
+
+  [2026-11-03T15:41:17.691Z] CRITERION 3 false → true: E2E: with the mock Jev returning 500 /
+  hanging / the network blocked, jevCode still completes the turn on the kept model
+
+  [2026-11-03T15:41:18.254Z] CRITERION 4 false → true: `npm pack --dry-run` lists only src, agents,
+  README.md, LICENSE and package.json; the tarball installs into a clean project and loads
+
+  [2026-11-03T15:41:18.869Z] CRITERION 5 false → true: README documents every option from design.md
+  section 4, the privacy note, and troubleshooting; a reviewer can configure the plugin from the
+  README alone
+
+  [2026-11-03T15:41:19.361Z] CRITERION 6 false → true: Defect list (if any) is returned to BE with
+  repro and expected vs actual; PM is told when all criteria pass
+
+  [2026-11-03T15:41:30.940Z] HAND-OFF QA → PM: QA 0008 PASS (7/7 AC). Evidence (opencode 2.2.5, bun
+  1.3.12, npm 11.6.2, Windows): bun test 311 pass/0 fail; OPENCODE_INTEGRATION=1 bun test 332 pass/0
+  fail; tsc 0 errors. npm pack: 36 files = LICENSE, README.md, package.json, agents/jevCode.md,
+  src/** only (no tests/specs/secrets; secret grep clean; package.json has NO BOM, valid JSON).
+  Tarball installed with npm into a clean temp project (outside repo, isolated HOME): opencode loads
+  it from node_modules via plugins {package,options}; /api/agent lists jevCode, no WARN/ERROR in
+  server log. The whole integration+e2e suite also passes when run against the unpacked tarball copy
+  (15/15) and the new tests/e2e suite against the installed package (6/6, JEVCODE_E2E_PLUGIN). New
+  opt-in tests/e2e/publish-readiness.int.test.ts: build-prompt model request bodies identical with
+  plugin vs plugin removed (0 Jev calls); Jev 500 / hang past timeoutMs / connection refused /
+  provider none -> jevCode finishes the turn on the kept model (exit 0, 'answered by m-mid'). README
+  verified vs src/config.ts (all 21 options + defaults match design s4), local-plugin example
+  (.opencode/plugins/jevcode/index.ts re-export works when the package is installed, fails without
+  it; bare .ts in plugins is ignored) and tool-group table. README fixes made: privacy note was
+  inaccurate (stage-B state also sends first/latest user text, <=12 file paths, shell commands, ~100
+  chars of failing-tool output; old text said tool outputs never sent) - rewritten from captured
+  request bodies; skill description limit 300; `plugin add` writes GLOBAL config; first-start 503
+  note; test commands. NOT live-tested: native transport (provider opencode/auto-native) - no
+  decision-type model in this install (model list: chat/…, no 'decision') and no Jev/OpenRouter
+  keys; covered only by unit tests with fakes; real Jev HTTP also untested (mock only, by design).
+  `opencode plugin add <pkg>` cannot take a tarball path (registry/git only), so it could not be
+  tested for the new build; name-based registry install was observed working on the stale published
+  0.1.0. PUBLISH BLOCKERS/RISKS for owner (not AC failures): (1) opencode-jevcode@0.1.0 ALREADY
+  EXISTS on npm (published 2026-11-03 14:53, 22 files, old partial build, dist-tag latest) -> `npm
+  publish` of 0.1.0 will fail; bump version (e.g. 0.2.0 or 0.1.1) in package.json before publishing
+  - package.json edit left to BE/owner. (2) Recommend peerDependenciesMeta
+  {"@opencode/plugin":{optional:true}} in package.json: with the plain peer dep npm/OpenCode pull
+  ~170-273 packages (16s) when installing the plugin (observed: 169 packages in OpenCode's cache;
+  first start of a short-lived client gets 503 'Location plugins did not finish activating'); with
+  optional peer it installs 1 package in 1s and the plugin still loads (host supplies
+  @opencode/plugin) - verified in a temp copy. (3) Low severity quality note for BE: skill
+  'capability' line for the built-in 'report' skill is an HTML comment ('<!-- Built-in skill. Name
+  and description are registered in code ...') because the first-paragraph heuristic does not skip
+  comments; harmless but sent to Jev. PM: close 0008 after deciding on the version bump /
+  peerDependenciesMeta change (can be a small BE ticket).
+
+  [2026-11-03T15:43:06.344Z] HAND-OFF PM → PM: PM close: QA verified all 7 AC. BE fixed publish
+  blockers (version 0.1.1, optional peerDependenciesMeta, skill capability HTML-comment heuristic).
+  Tests 312 unit / 333 integration pass, tsc clean. Owner step: npm publish 0.1.1 (account
+  obahdasarov).
+acceptance_criteria:
+  - description: >-
+      E2E: after `opencode plugin add` (or plugins entry with the packed tarball) /api/agent lists
+      jevCode and the plugin loads without errors in the server log
+    done: true
+  - description: >-
+      E2E: a jevCode prompt makes the mock provider receive the model chosen by the mock Jev, with
+      only the selected tools and the pruned messages
+    done: true
+  - description: >-
+      E2E: a build-agent prompt produces a request identical to a run with the plugin disabled, and
+      the pre-routing model is restored after switching from jevCode
+    done: true
+  - description: >-
+      E2E: with the mock Jev returning 500 / hanging / the network blocked, jevCode still completes
+      the turn on the kept model
+    done: true
+  - description: >-
+      `npm pack --dry-run` lists only src, agents, README.md, LICENSE and package.json; the tarball
+      installs into a clean project and loads
+    done: true
+  - description: >-
+      README documents every option from design.md section 4, the privacy note, and troubleshooting;
+      a reviewer can configure the plugin from the README alone
+    done: true
+  - description: >-
+      Defect list (if any) is returned to BE with repro and expected vs actual; PM is told when all
+      criteria pass
+    done: true

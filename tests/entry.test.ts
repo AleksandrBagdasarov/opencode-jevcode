@@ -91,7 +91,7 @@ describe("package entry", () => {
     const plugin = mod.default;
     expect(plugin.id).toBe("jevcode");
     expect(typeof plugin.setup).toBe("function");
-    expect(mod.MODULES).toEqual([]);
+    expect(mod.MODULES.map((m: { name: string }) => m.name)).toContain("agent");
     const cleanup = await plugin.setup({ options: {} } as never);
     expect(typeof cleanup).toBe("function");
     if (typeof cleanup === "function") await cleanup();

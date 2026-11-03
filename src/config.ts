@@ -28,6 +28,11 @@ export interface Resolved {
   skillThreshold: number;
   toolThreshold: number;
   alwaysKeepTools: string[];
+  /**
+   * Extra tool-id patterns per tool group (`*` / `?` wildcards): `{ "Database": ["*postgres*"], "MyGroup": [...] }`.
+   * Added to the built-in patterns; an unknown group name creates a new group.
+   */
+  toolGroups: Record<string, string[]>;
   keepRecentMessages: number;
   pruneMinTokens: number;
   contextMinConfidence: number;
@@ -88,6 +93,19 @@ function strList(v: unknown): string[] {
   for (const item of v) {
     const s = str(item);
     if (s && !out.includes(s)) out.push(s);
+  }
+  return out;
+}
+
+/** `{ group: [patterns] }`: non-empty trimmed names and patterns only; anything else is dropped. */
+function groupMap(v: unknown): Record<string, string[]> {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return {};
+  const out: Record<string, string[]> = {};
+  for (const [name, patterns] of Object.entries(v as Record<string, unknown>)) {
+    const key = name.trim();
+    if (key === "" || key === "__proto__") continue;
+    const list = strList(patterns);
+    if (list.length > 0) out[key] = list;
   }
   return out;
 }
@@ -167,6 +185,7 @@ function resolve(raw: unknown, env: Env): Resolved {
     skillThreshold: num(o.skillThreshold, DEFAULTS.skillThreshold, 0, 1, false),
     toolThreshold: num(o.toolThreshold, DEFAULTS.toolThreshold, 0, 1, false),
     alwaysKeepTools: strList(o.alwaysKeepTools),
+    toolGroups: groupMap(o.toolGroups),
     keepRecentMessages: num(o.keepRecentMessages, DEFAULTS.keepRecentMessages, 0, 10_000, true),
     pruneMinTokens: num(o.pruneMinTokens, DEFAULTS.pruneMinTokens, 0, Number.MAX_SAFE_INTEGER, true),
     contextMinConfidence: num(o.contextMinConfidence, DEFAULTS.contextMinConfidence, 0, 1, false),

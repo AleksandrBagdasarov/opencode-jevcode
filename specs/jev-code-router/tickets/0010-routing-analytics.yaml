@@ -1,0 +1,26 @@
+title: 'Phase 7 (Later): routing analytics and evaluation log'
+status: depend
+depends:
+  - 0004-model-router-and-prompt-hook.yaml
+tags:
+  - BSA
+  - BE
+next_responsibility: BSA
+scope: 'Bounded decision log in plugin storage plus export. Backlog: not part of v0.1.'
+description: >-
+  Implements story R9. Store per-decision records (input hash, choices, confidences, latency,
+  fallback reason, chosen vs kept model) in ctx.storage as a ring buffer, and expose an export. No
+  prompt text is stored unless the user opts in.
+notes: >-
+  Later priority per feature.md roadmap.
+
+  [2026-11-03T15:43:09.245Z] HAND-OFF PM → BSA: PM decision: deferred to post-v0.1 (explicit 'Later'
+  phase). Do not start. Restart when real v0.1.1 usage exists. BSA to confirm the privacy impact
+  (the analytics log must follow the README privacy rules) when requirements are refined.
+acceptance_criteria:
+  - description: Ring buffer bounded by a configurable size; oldest entries evicted
+    done: false
+  - description: No prompt or file content stored by default (test)
+    done: false
+  - description: Export returns JSON usable for offline evaluation
+    done: false

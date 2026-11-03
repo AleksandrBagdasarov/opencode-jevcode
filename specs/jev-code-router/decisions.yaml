@@ -1,0 +1,1993 @@
+- datetime: 2026-11-03 15:24
+  title: Agent ships inside the plugin via AgentEditor.update upsert
+  tags:
+    - architecture
+    - agent
+    - opencode-v2
+    - research
+  change: >-
+    Decided that the jevCode agent is registered by the plugin itself with ctx.agent.transform(editor =>
+    editor.update("jevCode", ...)), guarded by a canary (ctx.agent.list) and an optional packaged agents/jevCode.md
+    fallback file. Written into specs/jev-code-router/design.md (D2, F1-F2).
+  reason: >-
+    feature.md assumed a companion .opencode/agents/jevCode.md because AgentEditor has no add(). A probe plugin on
+    OpenCode 2.2.5 showed editor.update on an unknown id creates the agent (listed with mode primary), so no companion
+    file is required. The behaviour is undocumented, hence the canary and the fallback.
+  invariant: >-
+    jevCode must copy build's permissions and never widen them. If OpenCode stops creating agents on update, the canary
+    must log an error and the plugin must keep working for other agents. Do not edit build/plan agents.
+  files:
+    - specs/jev-code-router/design.md
+    - specs/jev-code-router/story.md
+- datetime: 2026-11-03 15:24
+  title: Provider-neutral Jev client with three transports and fail-open fallback
+  tags:
+    - architecture
+    - jev
+    - resilience
+  change: >-
+    Design D4/D6: internal question model (choice/noul/score) mapped to OpenCode-native generate.decisions, TypeSafe
+    HTTP and OpenRouter transports; provider=auto prefers native decision model, then TYPESAFE_API_KEY, then
+    OPENROUTER_API_KEY, else deterministic fallback plan (keep model, no skills, all tools, no pruning).
+  reason: >-
+    Local OpenCode 2.2.5 lists 45 chat models and zero decision models, so native Jev cannot be the only path.
+    feature.md requires that Jev failures never make the agent unusable.
+  invariant: >-
+    Hooks never throw and never wait longer than timeoutMs on Jev. All Jev answers are validated against closed sets
+    built in code; arbitrary model/skill/tool strings are never applied. Secrets are never logged.
+  files:
+    - specs/jev-code-router/design.md
+- datetime: 2026-11-03 15:24
+  title: Two-stage routing and unit-based safe pruning
+  tags:
+    - architecture
+    - routing
+    - context
+  change: >-
+    Design D3/D7: Stage A in the prompt hook batches model+skills+tool groups in one Jev request; Stage B in the context
+    hook handles context relevance once per turn and re-applies the cached plan on continuations. Pruning works on units
+    with tool-call/tool-result pairs indivisible and a post-condition check that discards the prune on any orphan.
+  reason: >-
+    Prompt hook runs once per prompt but has no agent or messages; context hook runs before every model call but must
+    not call Jev each continuation. Removing half of a tool pair makes providers reject the request.
+  invariant: >-
+    At most one Jev call per prompt in stage A and one in stage B per turn; zero on continuations. Pruned output never
+    contains an orphan tool part. Persisted history is never modified.
+  files:
+    - specs/jev-code-router/design.md
+    - specs/jev-code-router/story.md
+- datetime: 2026-11-03 15:26
+  title: Package manifest and TypeScript config for opencode-jevcode
+  tags:
+    - scaffold
+    - distribution
+  change: >-
+    Added package.json (name opencode-jevcode, type module, exports ./src/index.ts, files whitelist
+    src/agents/README/LICENSE, peer @opencode/plugin >=2.2.0, pinned dev @opencode/plugin 2.2.5 and effect 4.0.6,
+    scripts typecheck=tsc --noEmit, test=bun test) and tsconfig.json (strict, ESNext, Bundler, noEmit, skipLibCheck,
+    types node+bun, include src+tests).
+  reason: >-
+    Design D1: TS source published as-is, no bundler; effect 4.0.6 is what @opencode/plugin@2.2.5 depends on and its
+    types import from effect.
+  invariant: >-
+    No bundler/build step; exports must point to src/index.ts; files whitelist must never include tests or specs;
+    @opencode/plugin stays a peer dependency.
+  files:
+    - package.json
+    - tsconfig.json
+- datetime: 2026-11-03 15:26
+  title: Add .gitignore
+  tags:
+    - scaffold
+  change: Added .gitignore ignoring node_modules and *.tgz.
+  reason: Keep dependencies and npm pack tarballs out of version control.
+  invariant: Never ignore src, agents, tests or specs.
+  files:
+    - .gitignore
+- datetime: 2026-11-03 15:26
+  title: Add MIT LICENSE and README stub
+  tags:
+    - scaffold
+    - distribution
+  change: Added LICENSE (MIT, 2026, jevcode contributors) and a README.md stub marked work in progress.
+  reason: R10.2 requires README and LICENSE in the package; files whitelist ships them.
+  invariant: No invented author/repository metadata; README option reference and troubleshooting are added by the publish ticket.
+  files:
+    - LICENSE
+    - README.md
+- datetime: 2026-11-03 15:26
+  title: Options parsing with safe defaults and clamping (src/config.ts)
+  tags:
+    - config
+    - resilience
+  change: >-
+    Added resolveOptions(raw, env) returning a fully populated Resolved object for every design section 4 option; wrong
+    types fall back to defaults, thresholds clamp to 0..1, ints floored, timeoutMs must be >0, models allowlist
+    validated as provider/id (bare strings accepted), API key from option else TYPESAFE_API_KEY then OPENROUTER_API_KEY
+    (provider=openrouter/typesafe pick their own env var). Resolved also exposes apiKeySource.
+  reason: >-
+    Ticket 0001/R7: option parsing must never throw and must degrade to defaults; typesafe wins over openrouter in auto
+    mode (R7.2).
+  invariant: >-
+    resolveOptions never throws. Resolved.apiKey is a secret and must be registered with the logger redactor, never
+    logged.
+  files:
+    - src/config.ts
+- datetime: 2026-11-03 15:26
+  title: Leveled logger with secret redaction (src/log.ts)
+  tags:
+    - logging
+    - security
+  change: >-
+    Added createLogger({debug, secrets, sink}) with debug/info/warn/error/addSecret, [jevcode] prefix on stderr
+    (console.error), debug suppressed unless enabled, redaction of registered secrets plus ts-..., sk-or-..., sk-... and
+    Bearer patterns; exported redact().
+  reason: 'R7.3: secrets must never be logged; the optional sink makes the logger testable.'
+  invariant: Every log line passes through redact(); the logger never throws; secrets shorter than 4 chars are not registered.
+  files:
+    - src/log.ts
+- datetime: 2026-11-03 15:27
+  title: Module registry with per-module fault isolation (src/modules.ts)
+  tags:
+    - architecture
+    - resilience
+  change: >-
+    Added src/modules.ts (not in design section 3 layout; wiring helper kept separate from index.ts so it is testable
+    without the OpenCode host): Module<Ctx>{name, init(ctx, deps)}, Deps{options, log, track}, wireModules() that
+    try/catches each init (sync throw or rejection), logs failures, collects disposables/cleanup functions and returns
+    {ok, failed, cleanup}; cleanup disposes newest-first and never throws.
+  reason: >-
+    D6 fail-open: plugin setup must never throw even when a wired module does. Later tickets append modules (agent,
+    prompt/context hooks) to the list in index.ts.
+  invariant: wireModules never throws; a failing module must not prevent later modules from initialising; cleanup is idempotent.
+  files:
+    - src/modules.ts
+- datetime: 2026-11-03 15:27
+  title: Host-independent setupPlugin (src/setup.ts)
+  tags:
+    - architecture
+    - resilience
+  change: >-
+    Added src/setup.ts: setupPlugin(ctx, modules, {env, sink}) parses options, builds the logger (apiKey registered as
+    secret), wires modules via wireModules and returns the cleanup fn; wrapped in an outer try/catch so it never throws
+    (returns a no-op cleanup on failure). index.ts will delegate to it.
+  reason: >-
+    Makes the entry logic testable with a fake ctx without loading the real OpenCode host; enforces D6 at the outermost
+    level.
+  invariant: setupPlugin never throws or rejects; apiKey always registered with the logger before any module runs.
+  files:
+    - src/setup.ts
+- datetime: 2026-11-03 15:27
+  title: Fix debug log formatting in setupPlugin
+  tags:
+    - logging
+  change: >-
+    Replaced printf-style debug message with a template string (logger does not format %s) and added key source (never
+    the key value).
+  reason: Logger concatenates args; %s would print literally.
+  invariant: Only the key source name is logged, never the key.
+  files:
+    - src/setup.ts
+- datetime: 2026-11-03 15:27
+  title: Plugin entry skeleton (src/index.ts)
+  tags:
+    - architecture
+    - entry
+  change: >-
+    Added src/index.ts: default export Plugin.define({id: "jevcode", setup}) delegating to setupPlugin with an exported,
+    currently empty MODULES registry (Module<HostContext>[]).
+  reason: 'Ticket 0001: entry wires modules that later tickets add, behind try/catch.'
+  invariant: >-
+    Plugin id stays "jevcode"; index.ts contains wiring only; new features are added as Module entries, not inline
+    logic.
+  files:
+    - src/index.ts
+- datetime: 2026-11-03 15:27
+  title: Unit tests for options resolution
+  tags:
+    - tests
+    - config
+  change: >-
+    Added tests/config.test.ts covering defaults from undefined/null/{}/array/string, wrong-type fallback, provider
+    enum, clamping, timeoutMs>0, integer flooring, model allowlist validation, and API key precedence from option/env.
+  reason: 'AC: resolveOptions returns a fully populated object without throwing; keys read from options or env.'
+  invariant: Tests use injected env objects, never the real process.env.
+  files:
+    - tests/config.test.ts
+- datetime: 2026-11-03 15:27
+  title: resolveOptions guarded against hostile option objects
+  tags:
+    - config
+    - resilience
+  change: >-
+    Split resolveOptions into a guarded public wrapper and internal resolve(); any exception (e.g. throwing
+    getter/proxy) returns pure defaults.
+  reason: Guarantee "never throws" literally rather than by convention.
+  invariant: resolveOptions never throws for any input.
+  files:
+    - src/config.ts
+- datetime: 2026-11-03 15:27
+  title: Config test asserts hostile options do not throw
+  tags:
+    - tests
+    - config
+  change: Hostile-proxy test now expects resolveOptions to return defaults instead of throwing.
+  reason: Matches the guarded implementation.
+  invariant: resolveOptions never throws for any input.
+  files:
+    - tests/config.test.ts
+- datetime: 2026-11-03 15:28
+  title: Unit tests for logger and secret redaction
+  tags:
+    - tests
+    - logging
+    - security
+  change: >-
+    Added tests/log.test.ts: prefix/levels, debug gating, console.error default sink, error formatting,
+    registered-secret and pattern (ts-, sk-or-, sk-, Bearer) redaction, addSecret, never-throws.
+  reason: 'AC: API keys never appear in log output (unit test on redaction).'
+  invariant: Redaction tests must keep covering every registered and pattern-based key shape.
+  files:
+    - tests/log.test.ts
+- datetime: 2026-11-03 15:28
+  title: Entry/setup tests with failing modules
+  tags:
+    - tests
+    - resilience
+  change: >-
+    Added tests/entry.test.ts: setup survives sync-throwing and rejecting modules (later modules still run, failure
+    logged), modules get options/log, cleanup order and idempotency, hostile ctx, key redaction in module-error logs,
+    and the real default export (id jevcode, minimal ctx).
+  reason: 'AC: plugin setup never throws even when a wired module throws.'
+  invariant: Entry tests must not depend on a running OpenCode host.
+  files:
+    - tests/entry.test.ts
+- datetime: 2026-11-03 15:29
+  title: 'Verified scaffold: install, typecheck, tests, pack contents'
+  tags:
+    - scaffold
+    - verification
+  change: >-
+    Ran bun install (generated bun.lock, kept for reproducible installs), bun run typecheck (exit 0), bun test (38
+    pass), npm pack --dry-run (8 files: LICENSE, README, package.json, src/*; no tests/specs).
+  reason: Ticket 0001 acceptance verification.
+  invariant: npm pack must keep excluding tests, specs and secrets; bun.lock is not in the files whitelist.
+  files:
+    - bun.lock
+    - package.json
+- datetime: 2026-11-03 15:31
+  title: Agent definition module with single-source system prompt (src/agent/definition.ts)
+  tags:
+    - agent
+    - isolation
+    - opencode-v2
+  change: >-
+    Added JEV_AGENT_ID, JEV_DESCRIPTION, JEV_COLOR, JEV_SYSTEM_PROMPT, parseModelKey (provider/id[#variant], only the
+    first slash splits), applyJevAgent(draft, options, build?) and renderAgentMarkdown(). applyJevAgent only assigns
+    (idempotent), deep-copies build.permissions when build exists and otherwise leaves host default permissions
+    untouched.
+  reason: >-
+    Ticket 0002 / R1.1-R1.2 / D2. Rendering agents/jevCode.md from the same constants prevents the packaged fallback
+    from drifting from the in-plugin prompt.
+  invariant: >-
+    Permissions are only ever copied from build, never invented or widened. applyJevAgent must stay idempotent
+    (transforms replay on reload). Prompt text lives only in this file.
+  files:
+    - src/agent/definition.ts
+- datetime: 2026-11-03 15:31
+  title: 'Spike result: switchModel in prompt hook works on the same turn'
+  tags:
+    - spike
+    - model-routing
+    - opencode-v2
+    - research
+  change: >-
+    Added specs/jev-code-router/research.md and research/ assets (agent upsert probe, spike plugin, OpenAI-compatible
+    mock server). Recorded: ctx.session.switchModel inside the prompt hook returns in ~16ms, causes no deadlock and the
+    same prompt's model request uses the new model; ctx.session.get returns SessionInfo directly; session.agent is
+    undefined for default-agent sessions on the first prompt; real tool ids and message shapes captured.
+  reason: >-
+    Ticket 0004 listed switchModel-in-prompt-hook as a risky spike. Running it against OpenCode 2.2.5 with a mock
+    provider removes the risk, so the fallback design in section 5 is not needed.
+  invariant: >-
+    Stage A applies the model switch inside the prompt hook (no microtask fallback). Unset session agent is treated as
+    non-jev unless makeDefault. Tool groups must keep execute, question, todowrite and skill by default.
+  files:
+    - specs/jev-code-router/research.md
+    - specs/jev-code-router/research/agent-upsert-probe.ts
+    - specs/jev-code-router/research/spike-plugin.ts
+    - specs/jev-code-router/research/mock-openai-server.mjs
+- datetime: 2026-11-03 15:31
+  title: Agent registration, canary and file fallback (src/agent/register.ts)
+  tags:
+    - agent
+    - resilience
+    - opencode-v2
+  change: >-
+    Added registerAgent(ctx, {options, log}) using ctx.agent.transform with a synchronous try/guarded callback
+    (editor.get('build') -> editor.update('jevCode', applyJevAgent) and editor.default when makeDefault), a canary
+    (ctx.agent.list() with timeout; accepts {data:[...]} or a bare array) that logs an error with remediation when
+    jevCode is missing, and writeFallbackFile(directory) which mkdir -p's .opencode/agents and writes the packaged
+    agents/jevCode.md with flag 'wx' (never overwrites; falls back to renderAgentMarkdown if the packaged file is
+    unreadable). Returns a Disposable; registerAgent/runCanary never throw.
+  reason: >-
+    Design D2 + R1.4: undocumented upsert needs a guard; a failed registration must degrade to a clear error, never
+    break the plugin.
+  invariant: >-
+    Transform callback stays synchronous and idempotent. File fallback never overwrites an existing file. Canary and
+    registration never throw out of the module. Permissions come only from build.
+  files:
+    - src/agent/register.ts
+- datetime: 2026-11-03 15:31
+  title: Jev question/answer types and transport error classes
+  tags:
+    - jev
+    - types
+    - resilience
+  change: >-
+    Added src/jev/types.ts: Question/Answer/Questions/Answers unions, JevTransport interface (ask(state, questions,
+    {signal})), limits MAX_CHOICE_OPTIONS=255 / MAX_SCORE_LEVELS=10, error classes
+    JevHttpError/JevNetworkError/JevProtocolError/JevTimeoutError and isRetryable (network + HTTP 5xx only).
+  reason: >-
+    Ticket 0003 / design D4: provider-neutral model; typed errors let the client apply the retry rule (5xx/network yes;
+    4xx/timeout/protocol no) without parsing messages.
+  invariant: Error messages never include credentials, request bodies or response bodies. Retry only on network errors and 5xx.
+  files:
+    - src/jev/types.ts
+- datetime: 2026-11-03 15:31
+  title: Isolation predicate and session agent resolution (src/agent/isolation.ts)
+  tags:
+    - isolation
+    - agent
+    - resilience
+  change: >-
+    Added isJevAgent(id) (exact === 'jevCode'), resolveSessionAgent(ctx, sessionID, {makeDefault}) via ctx.session.get
+    (SessionInfo returned directly per client types; {data} tolerated) returning the agent id, 'jevCode' for an unset
+    agent only when makeDefault, else undefined; never throws (undefined on error). Exported unwrapSession helper for
+    reuse (also reads session.model).
+  reason: >-
+    Design D8 / F3: the prompt hook event has no agent, so isolation depends on this one predicate and a defensive
+    session lookup.
+  invariant: >-
+    isJevAgent stays an exact match and the single predicate. Unknown/error => not jev (fail closed for isolation).
+    resolveSessionAgent never throws.
+  files:
+    - src/agent/isolation.ts
+- datetime: 2026-11-03 15:31
+  title: Shared HTTP transport helpers (src/jev/transports/http.ts)
+  tags:
+    - jev
+    - transport
+    - security
+  change: >-
+    Added http.ts (not in design layout; shared by typesafe and openrouter): FetchLike, toHttpQuestions
+    (choice->criteria map, noul, score->criteria[]), parseHttpAnswers (noul/choice/score/error, malformed entries become
+    error answers, no answers object -> JevProtocolError), postJson (Bearer header, JSON body, typed errors, messages
+    never include key/body).
+  reason: Both HTTP endpoints share question and answer shape (design F10); one implementation avoids drift.
+  invariant: >-
+    postJson never puts the API key, request body or response body in an error message; aborts propagate unchanged so
+    the client classifies them as timeouts.
+  files:
+    - src/jev/transports/http.ts
+- datetime: 2026-11-03 15:32
+  title: TypeSafe transport
+  tags:
+    - jev
+    - transport
+  change: >-
+    Added src/jev/transports/typesafe.ts: createTypesafeTransport({apiKey, endpoint?, model?, fetch}) posting {model:
+    model||"jev-latest", state, questions} to endpoint||https://api.typesafe.ai/v1/systemone.
+  reason: Design F10/D4, ticket 0003.
+  invariant: fetch is injected (no global network in tests); request is exactly {model,state,questions} with Bearer auth.
+  files:
+    - src/jev/transports/typesafe.ts
+- datetime: 2026-11-03 15:32
+  title: OpenRouter transport
+  tags:
+    - jev
+    - transport
+  change: >-
+    Added src/jev/transports/openrouter.ts: createOpenRouterTransport({apiKey, endpoint?, model?, fetch}) posting to
+    endpoint||https://openrouter.ai/api/alpha/decisions with default model typesafe/jev-1.13; shares request/answer
+    mapping with typesafe; usage.cost ignored.
+  reason: Design F10/D4, ticket 0003.
+  invariant: Same request shape as typesafe; fetch injected; key only in Authorization header.
+  files:
+    - src/jev/transports/openrouter.ts
+- datetime: 2026-11-03 15:32
+  title: OpenCode-native decisions transport
+  tags:
+    - jev
+    - transport
+  change: >-
+    Added src/jev/transports/native.ts: createNativeTransport({generateDecisions, model:{providerID,id}}); maps
+    noul->predicate, choice->choices[{value,description}], score->levels[{label}]; state -> {type:text} for strings else
+    {type:json}; parses predicate/choice/score/error answers (choice values and probabilities arrays normalised to
+    records) keyed by name; passes {signal} as RequestOptions.
+  reason: Design F9/D4, ticket 0003.
+  invariant: >-
+    generateDecisions is injected; rejection is wrapped in JevNetworkError (aborts propagate) so error messages never
+    carry provider payloads.
+  files:
+    - src/jev/transports/native.ts
+- datetime: 2026-11-03 15:32
+  title: Model restore memory and logic (src/state/session-state.ts)
+  tags:
+    - restore
+    - isolation
+    - state
+    - storage
+  change: >-
+    Added storage-backed createRestoreMemory(storage, log?) with remember/peek/clear under key 'restore/<sessionID>'
+    (corrupt entries are dropped, never throws), pure planRemember(existing, current, applied) (keeps the original
+    previous while the session stays on a Jev-applied model), pure planRestore(entry, currentModel) ->
+    restore|clear|none (restore only when current equals applied incl. variant), runRestore (session.switchModel,
+    returns false on error), restoreIfNeeded(ctx, memory, sessionID, log) for non-jev prompts (cleared even if the
+    switch fails; kept when the session cannot be read), and reconcileOnJevPrompt for jev prompts: clears memory only if
+    the user changed the model since (keeps it when the session is still on applied so the original previous is not
+    lost). The turn-plan cache is NOT in this ticket and must be added in a separate section of this file.
+  reason: >-
+    R1.5 / design 'Isolation and restore'. Literal 'clear on return to jevCode' would lose the user's original model
+    when they Tab away and back without prompting; clearing only stale memory satisfies the intent.
+  invariant: >-
+    Restore switches only when session model equals applied; never switch over a manual user change. Nothing exported
+    throws. Keys stay namespaced (restore/...). Restore code stays separate from the future plan cache.
+  files:
+    - src/state/session-state.ts
+- datetime: 2026-11-03 15:32
+  title: Packaged fallback agent file agents/jevCode.md
+  tags:
+    - agent
+    - distribution
+  change: >-
+    Added agents/jevCode.md (frontmatter description, mode: primary, color; body = the in-plugin system prompt). Content
+    equals renderAgentMarkdown() exactly (LF endings), pinned by a test.
+  reason: >-
+    R1.4: ready-to-copy fallback if the in-plugin registration does not take effect; also what the optional
+    agentFileFallback writes.
+  invariant: >-
+    Never edit this file by hand away from definition.ts: the drift test must keep passing. Shipped via the package
+    'files' whitelist (agents).
+  files:
+    - agents/jevCode.md
+- datetime: 2026-11-03 15:32
+  title: Answer validation helpers (src/jev/response.ts)
+  tags:
+    - jev
+    - validation
+  change: >-
+    Added pickChoice(answer, allowed, minConfidence), noulProbability(answer) clamped 0..1, rankNoul(answers, prefix,
+    threshold) (prefix stripped, desc by probability), scoreValue(answer, max) clamped 0..max; all return null/[] on
+    wrong kind/undefined/NaN.
+  reason: 'Design D5: closed-set validation of every Jev output; ticket 0003.'
+  invariant: Helpers never throw and never return a choice outside the allowed set.
+  files:
+    - src/jev/response.ts
+- datetime: 2026-11-03 15:32
+  title: Generic question builders (src/jev/questions.ts)
+  tags:
+    - jev
+  change: >-
+    Added choiceQuestion(instructions, options), noulQuestion(instructions), scoreQuestion(instructions, levels)
+    returning the Question union.
+  reason: 'Ticket 0003: only generic helpers; router tickets add domain questions.'
+  invariant: No domain logic in this module.
+  files:
+    - src/jev/questions.ts
+- datetime: 2026-11-03 15:32
+  title: Agent wiring module (src/agent/module.ts)
+  tags:
+    - agent
+    - architecture
+  change: >-
+    Added agentModule: Module<AgentCtx> {name:'agent', init: registerAgent(ctx,{options,log})} so index.ts only needs a
+    one-line entry.
+  reason: Keep index.ts wiring-only and the edit minimal while another ticket edits neighbouring code.
+  invariant: Module init only delegates; logic stays in register.ts. The module's Disposable is tracked by wireModules.
+  files:
+    - src/agent/module.ts
+- datetime: 2026-11-03 15:32
+  title: Register agentModule in MODULES (src/index.ts)
+  tags:
+    - agent
+    - architecture
+  change: MODULES now contains agentModule (the single allowed entry for ticket 0002); import added in a follow-up edit.
+  reason: 'Ticket 0002: the plugin registers jevCode at setup.'
+  invariant: index.ts stays wiring-only; other tickets append their own modules after this entry.
+  files:
+    - src/index.ts
+- datetime: 2026-11-03 15:32
+  title: Import agentModule in src/index.ts
+  tags:
+    - agent
+    - architecture
+  change: Added the import of agentModule from ./agent/module.ts.
+  reason: Completes the previous MODULES entry.
+  invariant: index.ts stays wiring-only.
+  files:
+    - src/index.ts
+- datetime: 2026-11-03 15:33
+  title: 'Jev client: provider selection, shared deadline, retry, fail-open'
+  tags:
+    - jev
+    - resilience
+    - client
+  change: >-
+    Added src/jev/client.ts: createJevClient({options, log, fetch?, listModels?, generateDecisions?, now?}) -> {ask,
+    describe}. Lazy transport resolution (auto: native decision model preferring ids containing "jev" -> typesafe ->
+    openrouter -> none; option-supplied key under auto is typesafe unless it starts with sk-or- or endpoint mentions
+    openrouter), re-resolved at most once per 60s after a none result, one info notice. ask validates questions (choice
+    1..255 options, score 2..10 levels), caps state at STATE_MAX_CHARS=12000, one AbortController deadline = timeoutMs
+    shared by resolution/attempt/retry (Promise.race so a transport ignoring the signal still returns on time), retries
+    once on network error/5xx only, returns null on every failure, partial answers return only usable ones, missing
+    requested question => null.
+  reason: Story R7, design D4/D6, ticket 0003.
+  invariant: >-
+    ask never throws and never exceeds ~timeoutMs; no retry on 4xx/timeout/protocol errors; API key registered with
+    log.addSecret and never logged; absent keys in the result mean unanswered.
+  files:
+    - src/jev/client.ts
+- datetime: 2026-11-03 15:33
+  title: Unit tests for agent definition, registration, canary and file fallback
+  tags:
+    - tests
+    - agent
+  change: >-
+    Added tests/agent.test.ts with a fake upserting AgentEditor: definition fields, agentModel parsing, deep-copied
+    build permissions (and none invented when build is absent), md/definition drift test, idempotent transform,
+    makeDefault, build untouched, error paths (throwing editor, rejecting transform), canary
+    present/missing/list-error/timeout/array shape, fallback file creation, no-overwrite, unwritable target.
+  reason: Ticket 0002 acceptance criteria 2-5 and 7.
+  invariant: >-
+    Tests use temp dirs only and never touch the real project .opencode folder. The fake editor must keep upsert
+    semantics matching OpenCode 2.2.5.
+  files:
+    - tests/agent.test.ts
+- datetime: 2026-11-03 15:33
+  title: Transport unit tests
+  tags:
+    - tests
+    - jev
+  change: >-
+    Added tests/jev/transports.test.ts: exact request shape (URL, Bearer header, body model/state/questions) and
+    sample-response parsing for typesafe and openrouter; native mapping with fake generateDecisions; error/key-leak
+    cases.
+  reason: Ticket 0003 AC 1 and 2.
+  invariant: No real network; fetch and generateDecisions are fakes.
+  files:
+    - tests/jev/transports.test.ts
+- datetime: 2026-11-03 15:33
+  title: Unit tests for isolation predicate and session agent resolution
+  tags:
+    - tests
+    - isolation
+  change: >-
+    Added tests/isolation.test.ts: exact-match isJevAgent over near-miss ids, resolveSessionAgent for set/unset agent
+    with makeDefault true/false, {data} wrapper, error/garbage paths returning undefined, unwrapSession.
+  reason: 'AC: isJevAgent exact; resolveSessionAgent honours makeDefault.'
+  invariant: Error paths must keep resolving to undefined even with makeDefault true (fail closed for isolation).
+  files:
+    - tests/isolation.test.ts
+- datetime: 2026-11-03 15:33
+  title: Response helper and builder tests
+  tags:
+    - tests
+    - jev
+  change: Added tests/jev/response.test.ts covering pickChoice, noulProbability, rankNoul, scoreValue and question builders.
+  reason: Ticket 0003 AC 6.
+  invariant: Helpers keep rejecting out-of-set choices.
+  files:
+    - tests/jev/response.test.ts
+- datetime: 2026-11-03 15:34
+  title: Unit tests for restore memory and restore logic
+  tags:
+    - tests
+    - restore
+  change: >-
+    Added tests/restore.test.ts: storage-backed memory (namespaced key, restart survival, JSON-safe, corrupt entries,
+    storage failures), planRestore/planRemember pure rules, restoreIfNeeded (no memory, restore when current==applied,
+    clear when user changed, variant change, wrapper shape, per-session, switch failure, unreadable session, throwing
+    memory) and reconcileOnJevPrompt.
+  reason: >-
+    AC: restore only when current model equals applied; clear on manual change; stale memory cleared when returning to
+    jevCode.
+  invariant: Tests use fakes only (no real host). The 'never switch over a manual change' case must stay covered.
+  files:
+    - tests/restore.test.ts
+- datetime: 2026-11-03 15:34
+  title: Canary logs the error message explicitly
+  tags:
+    - agent
+    - logging
+  change: >-
+    runCanary now logs the failure reason from err.message in the warning text instead of passing the Error object
+    (Logger prints err.stack, which in Bun for an Error created inside a Promise executor did not include the message).
+  reason: A timeout/failure reason must be visible in the log (test caught that 'timed out after N ms' was missing).
+  invariant: Canary still never throws; logged text still passes through logger redaction.
+  files:
+    - src/agent/register.ts
+- datetime: 2026-11-03 15:34
+  title: Jev client tests
+  tags:
+    - tests
+    - jev
+    - resilience
+  change: >-
+    Added tests/jev/client.test.ts: auto provider order (native > typesafe > openrouter > none), explicit providers,
+    endpoint/model options, re-resolve throttle, null-and-never-throw for network/4xx/5xx/invalid
+    JSON/missing/error/sync-throw, retry rules, timeout within 100ms (incl. shared deadline and signal-ignoring
+    transport), limits, state cap, key never logged.
+  reason: Ticket 0003 AC 3-5 and 7.
+  invariant: No real network; timeouts in tests are short (<=200ms).
+  files:
+    - tests/jev/client.test.ts
+- datetime: 2026-11-03 15:44
+  title: Integration test against the real opencode binary (agent registration + isolation sanity)
+  tags:
+    - tests
+    - integration
+    - agent
+  change: >-
+    Added tests/integration/agent.int.test.ts, skipped unless OPENCODE_INTEGRATION=1: creates temp projects with and
+    without a plugins entry pointing at the repo root, runs 'opencode --standalone api get /api/agent', asserts jevCode
+    (mode primary, description, non-empty system), no canary error on stderr, permissions deep-equal build, and all
+    other agents (incl. build/plan) identical with and without the plugin.
+  reason: >-
+    Acceptance criterion 1 / design test strategy 'Agent canary': pins the undocumented upsert behaviour so an OpenCode
+    update that breaks it is noticed.
+  invariant: >-
+    Test is opt-in (never runs in plain bun test) and uses temp dirs only. Plugin loading via the repo root relies on
+    package.json exports ./src/index.ts (no change was needed).
+  files:
+    - tests/integration/agent.int.test.ts
+- datetime: 2026-11-03 15:45
+  title: Document that plugin stderr is not visible in api get (integration test)
+  tags:
+    - tests
+    - integration
+    - research
+  change: >-
+    Relabelled the stderr assertion in the integration test as best-effort. Observed on OpenCode 2.2.5: console.error
+    output of plugins (even with debug:true) is not forwarded by 'opencode --standalone api get', so canary logs cannot
+    be asserted from the CLI; plugin options must be given as {package, options} entries in the plugins array (the [pkg,
+    opts] tuple form silently loads nothing).
+  reason: Avoid a misleading test claim; record real host behaviour for README/QA.
+  invariant: >-
+    Integration evidence for registration is the /api/agent listing, not log output. README option docs must show the
+    {package, options} entry shape.
+  files:
+    - tests/integration/agent.int.test.ts
+- datetime: 2026-11-03 15:45
+  title: Publisher and repository metadata added to package.json
+  tags:
+    - distribution
+    - npm
+    - metadata
+  change: >-
+    Added author (obahdasarov, sashabagdasarov@gmail.com, GitHub profile URL), repository
+    (git+https://github.com/AleksandrBagdasarov/opencode-jevcode.git), homepage and bugs URLs to package.json.
+  reason: >-
+    Owner supplied the GitHub repo and npm account; npm package metadata must point to the real repository for the
+    published plugin.
+  invariant: >-
+    Package name stays opencode-jevcode (unscoped). Never commit npm tokens. npm publish is run by the owner (account
+    obahdasarov) only; specs/ and feature.md stay gitignored.
+  files:
+    - package.json
+- datetime: 2026-11-03 15:51
+  title: Entry test tolerates registered modules
+  tags:
+    - test
+    - agent
+  change: tests/entry.test.ts now asserts MODULES contains the agent module instead of equalling [].
+  reason: >-
+    Agent module was registered by ticket 0002, so the empty-list assertion became stale; later tickets add more
+    modules.
+  invariant: Entry test must not pin the full module list; plugin setup with minimal ctx must still return a cleanup function.
+  files:
+    - tests/entry.test.ts
+- datetime: 2026-11-03 15:56
+  title: Strip UTF-8 BOM from package.json (and README.md)
+  tags:
+    - distribution
+    - integration
+    - agent
+    - research
+  change: >-
+    Removed the leading UTF-8 BOM (EF BB BF) from package.json and README.md. Bytes otherwise unchanged. package.json
+    now starts with '{'.
+  reason: >-
+    OpenCode 2.2.5's plugin loader silently skipped the repo-root plugin entry (no 'loading plugin' log, no error) when
+    package.json began with a BOM, so jevCode was never registered and the integration test (AC1) failed. Bisected:
+    identical package.json without BOM loads fine. The BOM was introduced when the publisher metadata was added via
+    PowerShell.
+  invariant: >-
+    package.json (and any file edited via PowerShell Set-Content/Out-File) must be written as UTF-8 WITHOUT BOM; the
+    opt-in integration test (OPENCODE_INTEGRATION=1) is the guard. Never use PS5 Set-Content -Encoding utf8 on
+    package.json.
+  files:
+    - package.json
+    - README.md
+- datetime: 2026-11-03 15:57
+  title: Ticket 0002 restore AC reworded to match R1.5/D8
+  tags:
+    - restore
+    - agent
+  change: >-
+    Reworded the restore acceptance criterion in ticket 0002: on return to jevCode, memory is cleared only when stale
+    (session model != applied) and kept while the session is still on the applied model. Criterion stays done:true.
+  reason: >-
+    PM accepted the implementation's reading (QA flag). Literal 'clear on return' would lose the user's original model
+    on Tab away/back; matches story R1.5 and design D8.
+  invariant: >-
+    Restore switches only when session model equals applied; stale memory is cleared; memory kept while session stays on
+    applied model.
+  files:
+    - specs/jev-code-router/tickets/0002-jevcode-agent-and-isolation.yaml
+- datetime: 2026-11-03 15:58
+  title: TurnPlan type, fallback plan and stage-A contributor contract (src/router/plan.ts)
+  tags:
+    - routing
+    - architecture
+    - jev
+  change: >-
+    Added src/router/plan.ts: TurnPlan (design section 4), fallbackPlan(sessionID, turnKey, reason, now),
+    hashText/turnKeyFor (message id else hash+length), and the StageAContributor contract: prepare(input) -> {questions,
+    apply(answers|null, plan) -> {decided, reason}} | {skip}. All contributors' questions are merged by the prompt hook
+    into ONE Jev request; plan.source is 'jev' if any contributor decided, else 'fallback' with joined reasons.
+  reason: >-
+    Ticket 0004 requires the prompt hook to be structured so skills/tool groups (0005/0006) add questions to the same
+    batched request without touching the hook.
+  invariant: >-
+    Question names must be unique across contributors (prefix by kind). Fallback plan always means: keep model, no
+    skills, no tool exclusions, no pruning. Code validates every answer against closed sets inside apply().
+  files:
+    - src/router/plan.ts
+- datetime: 2026-11-03 15:59
+  title: 'Model router: closed candidate catalog, choice question, validated mapping (src/router/model-router.ts)'
+  tags:
+    - routing
+    - model-routing
+    - jev
+    - validation
+  change: >-
+    Added src/router/model-router.ts: buildCandidates (enabled, status active/unset, type chat/unset,
+    capabilities.tools; cap 12 with the current model pinned; allowlist order when `models` set, else round-robin over
+    profiles, newest first), deriveProfile (context>=400k large-context; output price <=2 fast, >=15 reasoning, else
+    balanced; plugin-defined), buildModelQuestion (choice over provider/id keys + 'keep'), decideModel (uses pickChoice
+    from src/jev/response; keep/unknown/low-confidence/no answer => keep with a reason), sameModelId (provider+id only),
+    createModelRouter StageAContributor (30s catalog TTL, timeout-guarded model.list, skips when no candidates or only
+    the current one), buildStageAState (request text cut to 3000 chars + current model key).
+  reason: >-
+    Ticket 0004 / story R2.1-R2.4 / design D5: Jev only picks among keys code built; any other output keeps the current
+    model.
+  invariant: >-
+    The plugin never switches to a model that is not a validated candidate. Validation uses pickChoice (closed set +
+    minConfidence). Candidate count never exceeds 12 and always includes the current model when it is valid.
+    fallbackModel option is intentionally unused in stage A (failure keeps the current model).
+  files:
+    - src/router/model-router.ts
+- datetime: 2026-11-03 15:59
+  title: decideModel validates via pickChoice
+  tags:
+    - routing
+    - validation
+  change: >-
+    decideModel in src/router/model-router.ts now delegates closed-set + confidence validation to pickChoice;
+    explainRejection only produces the fallbackReason text.
+  reason: Reuse the shared response helpers (clamping/closed-set) instead of re-implementing validation.
+  invariant: Applying a model decision never depends on explainRejection; only pickChoice-approved candidates are switched to.
+  files:
+    - src/router/model-router.ts
+- datetime: 2026-11-03 15:59
+  title: Import pickChoice in model router
+  tags:
+    - routing
+  change: Added the pickChoice import to src/router/model-router.ts (completes the previous decision).
+  reason: Compile fix for decideModel.
+  invariant: Same as the previous decideModel decision.
+  files:
+    - src/router/model-router.ts
+- datetime: 2026-11-03 15:59
+  title: Turn-plan cache in session-state.ts
+  tags:
+    - state
+    - routing
+  change: >-
+    Added createPlanCache<P>(maxSessions=200) to src/state/session-state.ts in its own section: set (replaces the
+    session's plan; oldest-inserted session evicted beyond the cap), get, getForTurn(sessionID, turnKey), delete, size.
+    In memory only; generic over any {sessionID, turnKey} so state does not import router types.
+  reason: >-
+    R6.2/R6.3, AC: plan stored per sessionID with turnKey; a second prompt replaces it. Context hook (0006) reads it
+    with getForTurn.
+  invariant: Plan cache code stays separate from the restore memory; plans are never persisted to storage; one plan per session.
+  files:
+    - src/state/session-state.ts
+- datetime: 2026-11-03 15:59
+  title: session-state.ts header comment updated
+  tags:
+    - state
+  change: Updated the file header comment to describe both the restore memory and the plan cache. Comment only.
+  reason: Header said the file holds only restore memory.
+  invariant: No behaviour change.
+  files:
+    - src/state/session-state.ts
+- datetime: 2026-11-03 16:00
+  title: Prompt hook (stage A) and promptHookModule (src/opencode/prompt-hook.ts)
+  tags:
+    - routing
+    - model-routing
+    - isolation
+    - resilience
+    - architecture
+  change: >-
+    Added createPromptHook(deps) and promptHookModule. Non-jev agent (resolveSessionAgent/isJevAgent) -> restoreIfNeeded
+    only (no Jev call, no plan). jevCode: reconcileOnJevPrompt, read session model (unreadable => fallback plan, no Jev
+    call), contributors prepare questions (duplicate names rejected), ONE client.ask for the merged questions, each
+    contributor applies to a scratch copy merged only on success, switchModel only when provider/id differs from the
+    session model (applied model re-read from the session to keep its variant, then planRemember/remember), switch
+    failure => keep model + reason. plan.source=jev iff some contributor decided, else fallback with joined reasons.
+    Plan stored via the plan cache in a finally; the callback never throws. Module builds the Jev client (listModels,
+    generate.decisions), restore memory (ctx.storage) and the model router and returns the hook registration for
+    cleanup.
+  reason: >-
+    Ticket 0004 / story R2, R6.1-R6.3, R7.1 / design D3, D6, D8 and the stage A flow. Spike R-2 confirmed switchModel
+    works inside the hook, so the section 5 microtask fallback is not used.
+  invariant: >-
+    Hooks never throw. Non-jev prompts: zero Jev calls, zero plan creation, restore still runs. Exactly one Jev request
+    per jevCode prompt in stage A. switchModel is called only for a validated candidate that differs from the current
+    model. Later tickets add contributors to the contributors array only (skills push {id} into event.prompt.skills in
+    apply/prepare).
+  files:
+    - src/opencode/prompt-hook.ts
+- datetime: 2026-11-03 16:00
+  title: plan.ts imports the plan cache factory
+  tags:
+    - state
+    - routing
+  change: >-
+    src/router/plan.ts now imports createPlanCache and PlanCache (in addition to ModelRef) from state/session-state.ts;
+    the shared turnPlans instance follows in the next edit.
+  reason: The prompt hook and the future context hook must share one plan cache.
+  invariant: plan.ts depends on state only via session-state.ts exports.
+  files:
+    - src/router/plan.ts
+- datetime: 2026-11-03 16:00
+  title: Shared turnPlans cache instance
+  tags:
+    - state
+    - routing
+  change: >-
+    Exported `turnPlans` (PlanCache<TurnPlan>) from src/router/plan.ts; promptHookModule writes to it and ticket 0006's
+    context hook reads it with getForTurn.
+  reason: >-
+    Stage B must see the plan stage A produced; tests inject their own cache so the singleton is not shared between
+    tests.
+  invariant: One plan per session in the shared cache; consumers must validate turnKey (getForTurn) before use.
+  files:
+    - src/router/plan.ts
+- datetime: 2026-11-03 16:00
+  title: Export MODEL_CONTRIBUTOR
+  tags:
+    - routing
+  change: Added `MODEL_CONTRIBUTOR = "model"` constant to src/router/model-router.ts (used by the prompt hook).
+  reason: After a failed switchModel the plan must stop counting the model contributor as a positive decision.
+  invariant: The model router's contributor name equals MODEL_CONTRIBUTOR.
+  files:
+    - src/router/model-router.ts
+- datetime: 2026-11-03 16:01
+  title: Model router uses MODEL_CONTRIBUTOR as its name
+  tags:
+    - routing
+  change: createModelRouter's returned contributor name now references MODEL_CONTRIBUTOR instead of a literal.
+  reason: Single source for the name.
+  invariant: No behaviour change.
+  files:
+    - src/router/model-router.ts
+- datetime: 2026-11-03 16:01
+  title: Register promptHookModule in MODULES (src/index.ts)
+  tags:
+    - architecture
+    - routing
+  change: src/index.ts now imports promptHookModule and MODULES = [agentModule, promptHookModule]; doc comment updated.
+  reason: 'Ticket 0004: the plugin installs the stage-A prompt hook at setup.'
+  invariant: index.ts stays wiring-only; the agent module is registered before the hook; a failing module never blocks the other.
+  files:
+    - src/index.ts
+- datetime: 2026-11-03 16:01
+  title: Model router unit tests
+  tags:
+    - tests
+    - routing
+    - model-routing
+  change: >-
+    Added tests/router/model-router.test.ts: catalog exclusions (disabled, deprecated/alpha/beta, decision/image, no
+    tools, malformed), cap 12 with pinned current model and profile round-robin, allowlist (order, profile override,
+    never falls back to the full list), price/profile derivation, question shape, decideModel for
+    set/outside/low-confidence/keep/null/wrong kind/NaN, contributor prepare/apply, skip paths, model.list timeout,
+    catalog TTL.
+  reason: Ticket 0004 AC 3 and 4.
+  invariant: Tests use fake model lists only; model.list timeouts in tests are <=100ms.
+  files:
+    - tests/router/model-router.test.ts
+- datetime: 2026-11-03 16:02
+  title: Prompt hook unit tests
+  tags:
+    - tests
+    - routing
+    - isolation
+    - resilience
+  change: >-
+    Added tests/router/prompt-hook.test.ts with a fake ctx/stub client: one switchModel for a confident choice, zero for
+    current model, remembered restore entry (original previous kept across a chain), zero switches + fallback plan with
+    reason for outside-set / low confidence / keep / null / empty answers / real-client timeout / switch failure /
+    throwing client / no candidates / unreadable model, isolation for build/plan/near-miss agents (zero asks, zero
+    plans, restore still runs, never over a manual change), unset agent vs makeDefault, plan cache
+    replace/turnKey/bound, batching of several contributors in ONE request, failing contributors, hostile events.
+  reason: Ticket 0004 AC 2, 3, 5, 6.
+  invariant: >-
+    Fakes only; the timeout test keeps timeoutMs at 60ms. The assertion that the stub client is never called for non-jev
+    agents must stay.
+  files:
+    - tests/router/prompt-hook.test.ts
+- datetime: 2026-11-03 16:02
+  title: Test typing fix in prompt-hook tests
+  tags:
+    - tests
+  change: Seed the restore memory in the manual-change test through the fake storage Map instead of storage.set (Json typing).
+  reason: tsc --noEmit error TS2345.
+  invariant: No behaviour change.
+  files:
+    - tests/router/prompt-hook.test.ts
+- datetime: 2026-11-03 16:03
+  title: Test-only mock provider plugin fixture
+  tags:
+    - tests
+    - integration
+  change: >-
+    Added tests/integration/fixtures/mock-provider.plugin.ts: registers an OpenAI-compatible provider 'mock' (m-small,
+    m-mid, m-big) pointing at options.baseURL via ctx.provider.transform (same technique as the verified spike).
+  reason: AC 7 end-to-end run on opencode 2.2.5 needs a model provider without credentials.
+  invariant: >-
+    Fixture is test-only: not in the package 'files' whitelist, loaded only by opt-in integration tests, does nothing
+    without options.baseURL.
+  files:
+    - tests/integration/fixtures/mock-provider.plugin.ts
+- datetime: 2026-11-03 16:03
+  title: Opt-in end-to-end test for stage A (tests/integration/prompt-hook.int.test.ts)
+  tags:
+    - tests
+    - integration
+    - model-routing
+    - spike
+  change: >-
+    Added tests/integration/prompt-hook.int.test.ts (skipped unless OPENCODE_INTEGRATION=1): Bun.serve mock
+    OpenAI-compatible provider + mock TypeSafe endpoint, temp project loading the mock-provider fixture and the
+    repo-root plugin via {package, options} entries, runs 'opencode --standalone run --agent X --model Y msg' and
+    asserts: one batched choice question over mock/* keys + keep, all model requests of the jevCode prompt used Jev's
+    choice, build prompt makes zero Jev requests, a failing Jev keeps the requested model.
+  reason: AC 1 (spike evidence) and AC 7 (end-to-end on opencode 2.2.5 with captured evidence).
+  invariant: Opt-in only; temp dir and local ports only; no real credentials or network.
+  files:
+    - tests/integration/prompt-hook.int.test.ts
+- datetime: 2026-11-03 16:04
+  title: E2E test prints opencode output on non-zero exit
+  tags:
+    - tests
+    - integration
+  change: >-
+    The run() helper in tests/integration/prompt-hook.int.test.ts logs stdout and the last 3000 chars of stderr when
+    opencode exits non-zero.
+  reason: Diagnose a failing opt-in e2e run.
+  invariant: Diagnostics only; no assertions changed.
+  files:
+    - tests/integration/prompt-hook.int.test.ts
+- datetime: 2026-11-03 16:04
+  title: Mock provider fixture reads its URL from env and is auto-discovered
+  tags:
+    - tests
+    - integration
+    - research
+  change: >-
+    tests/integration/fixtures/mock-provider.plugin.ts now reads JEVCODE_TEST_MOCK_BASE_URL (process.env) instead of
+    ctx.options; the e2e test copies it into <project>/.opencode/plugins/mock-provider/index.ts.
+  reason: >-
+    Observed on OpenCode 2.2.5: a bare .ts file listed in the plugins array was not loaded ('Model unavailable:
+    mock/m-small'), while directory auto-discovery under .opencode/plugins works (as in the spike).
+  invariant: Fixture stays test-only and a no-op without the env var.
+  files:
+    - tests/integration/fixtures/mock-provider.plugin.ts
+- datetime: 2026-11-03 16:04
+  title: E2E test loads the mock provider via .opencode/plugins
+  tags:
+    - tests
+    - integration
+  change: >-
+    tests/integration/prompt-hook.int.test.ts copies the fixture into <tmp>/.opencode/plugins/mock-provider/index.ts,
+    passes JEVCODE_TEST_MOCK_BASE_URL in the spawned env, and lists only the repo plugin in opencode.jsonc.
+  reason: The fixture listed in the plugins array was not loaded; directory auto-discovery works.
+  invariant: Temp dirs and local ports only; opt-in.
+  files:
+    - tests/integration/prompt-hook.int.test.ts
+- datetime: 2026-11-03 16:04
+  title: E2E uses the models allowlist to restrict candidates to the mocks
+  tags:
+    - tests
+    - integration
+    - model-routing
+  change: >-
+    Added options.models = [mock/m-small, mock/m-mid, mock/m-big] to the e2e plugin entry. First e2e run showed the real
+    candidate list contained mock/m-small plus 11 built-in opencode models (cap 12 reached) and the mock choice was
+    rightly rejected as outside the candidate set.
+  reason: >-
+    Deterministic candidate set for the e2e; also exercises the allowlist on the real host. Note for QA: without an
+    allowlist the 12-candidate cap may exclude a model a user expects to be routable.
+  invariant: 'Closed-set validation stays strict: a choice outside the offered candidates is never applied.'
+  files:
+    - tests/integration/prompt-hook.int.test.ts
+- datetime: 2026-11-03 16:05
+  title: 'E2E helpers: session model lookup and extra run args'
+  tags:
+    - tests
+    - integration
+  change: >-
+    Added latestSessionModel() (GET /api/session filtered to the temp project, newest) and optional extra args /
+    optional --model to run() in tests/integration/prompt-hook.int.test.ts.
+  reason: Needed to assert the stored session model (AC 7) and the restore-on-agent-switch behaviour end to end.
+  invariant: Helpers only; opt-in test.
+  files:
+    - tests/integration/prompt-hook.int.test.ts
+- datetime: 2026-11-03 16:05
+  title: 'E2E: assert stored session model and restore after switching to build'
+  tags:
+    - tests
+    - integration
+    - restore
+    - model-routing
+  change: >-
+    The jevCode e2e test now also asserts /api/session reports mock/m-big; a new test runs 'run --continue --agent
+    build' on that session and asserts zero Jev requests, session model restored to mock/m-small and the model request
+    using m-small. Manual probe before writing it: jevCode run -> session mock/m-big, MODELREQ m-big x2; continue with
+    build -> session mock/m-small, MODELREQ m-small.
+  reason: AC 7 (session model equals Jev's choice) and story R1.5 evidence on opencode 2.2.5.
+  invariant: >-
+    Restore is verified with the real host variant handling (session model carries variant 'default'; memory stores the
+    applied model as the session reports it).
+  files:
+    - tests/integration/prompt-hook.int.test.ts
+- datetime: 2026-11-03 16:06
+  title: 'Spike confirmed end to end with the real plugin: switchModel in the prompt hook works, no fallback needed'
+  tags:
+    - spike
+    - model-routing
+    - opencode-v2
+    - research
+    - restore
+  change: >-
+    Evidence from OPENCODE_INTEGRATION=1 bun test tests/integration (opencode 2.2.5, mock provider + mock TypeSafe
+    endpoint): (1) 'run --agent jevCode --model mock/m-small': session.agent IS 'jevCode' inside the prompt hook (so
+    --agent selects it before the hook), one batched Jev request, both model requests (title + agent) used m-big,
+    /api/session stores mock/m-big. (2) 'run --continue --agent build': zero Jev requests, session restored to
+    mock/m-small, model request used m-small. (3) fresh 'build' run: zero Jev requests, m-small. (4) Jev answering HTTP
+    400: model stays m-mid, exit 0. Design section 5 microtask fallback is NOT needed. Findings for README/QA: the
+    session model reported by the host carries variant 'default', so the applied model is stored as read back from the
+    session; a bare .ts in the plugins array is not loaded (use .opencode/plugins/<name>/index.ts); without a models
+    allowlist the candidate list is capped at 12 and a real install lists ~45 models, so the cap can hide a model.
+  reason: 'AC 1 and AC 7 of ticket 0004: captured evidence that stage A works on the real host.'
+  invariant: >-
+    Stage A switches the model inside the prompt hook. Applied model is recorded as the session reports it (variant
+    included) so restore's equality check holds.
+  files:
+    - tests/integration/prompt-hook.int.test.ts
+    - src/opencode/prompt-hook.ts
+- datetime: 2026-11-03 16:07
+  title: skillQuestion builder and SKILL_QUESTION_PREFIX in questions.ts
+  tags:
+    - jev
+    - routing
+  change: >-
+    Added SKILL_QUESTION_PREFIX = "skill:" and skillQuestion({name, description?, capability?}) -> noul question
+    (description cut at 300, capability at 200, name at 80 chars).
+  reason: Ticket 0005 asks for additions to src/jev/questions.ts; story R3.1 independent noul per skill.
+  invariant: Only skill metadata goes to Jev, never skill Markdown. Question names are skill:<id>.
+  files:
+    - src/jev/questions.ts
+- datetime: 2026-11-03 16:08
+  title: Skill router stage-A contributor (src/router/skill-router.ts)
+  tags:
+    - routing
+    - jev
+    - validation
+    - resilience
+  change: >-
+    Added createSkillRouter (StageAContributor "skills"): catalog from ctx.skill.list() (tolerates {data}/array, id
+    required, capability = first prose paragraph of content, first 2000 chars only, 30s TTL, timeout-guarded), skips on
+    maxSkills 0 / empty prompt / no skills / list failure; excludes skills the user already attached; lexical prefilter
+    (all when <=30, else only skills sharing a word stem with the prompt, name hit=3, description/capability hit=1, max
+    30, none => skip); one noul question skill:<id> per shortlisted skill; apply() uses rankNoul (clamped probability >=
+    skillThreshold), keeps only ids in the shortlist and not already attached (re-read at apply time), caps at
+    maxSkills, pushes {id} objects into prompt.skills last and sets plan.skills to the added ids.
+  reason: >-
+    Ticket 0005 / story R3 / design D5: Jev decides, code validates against a closed set; OpenCode resolves the skill
+    ids.
+  invariant: >-
+    Never copy skill Markdown anywhere. Only ids from the shortlist (subset of ctx.skill.list()) are ever added, never
+    duplicates of the user's selection, at most maxSkills. Any failure leaves event.prompt.skills untouched. plan.skills
+    lists only skills the plugin added.
+  files:
+    - src/router/skill-router.ts
+- datetime: 2026-11-03 16:08
+  title: Register skill router in promptHookModule contributors
+  tags:
+    - routing
+    - architecture
+  change: >-
+    promptHookModule now passes [modelRouter, skillRouter] as contributors (skill router lists via ctx.skill.list(),
+    lazily). PromptHookCtx gains `skill: {list()}`; the createSkillRouter import follows. createPromptHook itself is
+    unchanged.
+  reason: 'Ticket 0005: skill questions join the single batched stage-A request without touching hook logic.'
+  invariant: Hook stays contributor-agnostic; exactly one Jev request per jevCode prompt; model question stays first.
+  files:
+    - src/opencode/prompt-hook.ts
+- datetime: 2026-11-03 16:08
+  title: PromptHookCtx.skill typing in prompt-hook.ts
+  tags:
+    - routing
+    - types
+  change: 'Added `readonly skill: { list() }` to PromptHookCtx.'
+  reason: Skill router lists skills through ctx.skill.list().
+  invariant: Structural subset of the host Context only.
+  files:
+    - src/opencode/prompt-hook.ts
+- datetime: 2026-11-03 16:08
+  title: Import createSkillRouter in prompt-hook.ts
+  tags:
+    - routing
+  change: Added the createSkillRouter import (completes the contributor registration).
+  reason: Compile fix.
+  invariant: Same as the registration decision.
+  files:
+    - src/opencode/prompt-hook.ts
+- datetime: 2026-11-03 16:08
+  title: Skill router unit tests
+  tags:
+    - tests
+    - routing
+    - isolation
+    - resilience
+  change: >-
+    Added tests/router/skill-router.test.ts: catalog parsing/capability, lexical prefilter (100 skills capped at 30,
+    overlap kept), chooseSkills (threshold/order/maxSkills/hostile answers/already selected), prompt hook with real
+    model+skill routers over fakes (one ask with model+skill questions, {id} objects, hostile ids, maxSkills/threshold,
+    no duplicates, zero skills, Jev failure, list failure, maxSkills 0, isolation for non-jev agents), contributor
+    TTL/timeout/skip paths.
+  reason: Ticket 0005 acceptance criteria.
+  invariant: Fakes only; short timeouts (<=200ms); the isolation test (zero asks for non-jev agents) must stay.
+  files:
+    - tests/router/skill-router.test.ts
+- datetime: 2026-11-03 16:09
+  title: Fix prefilter ranking expectation in skill tests
+  tags:
+    - tests
+  change: >-
+    The 100-skill prefilter test now expects db-migrations (name hit + 2 description hits = 5) before docker-compose
+    (one name hit = 3).
+  reason: The original expectation miscounted the overlap scores; implementation behaviour is as designed.
+  invariant: Score weights (name 3, description/capability 1) unchanged.
+  files:
+    - tests/router/skill-router.test.ts
+- datetime: 2026-11-03 16:10
+  title: Resolved.toolGroups option type (config.ts)
+  tags:
+    - config
+    - routing
+  change: >-
+    Added `toolGroups: Record<string,string[]>` to the Resolved interface (extra tool-id patterns per group; parsing
+    follows in the next edits).
+  reason: 'Ticket 0006: tool groups must be user-extensible by option.'
+  invariant: resolveOptions still never throws; wrong types give {}.
+  files:
+    - src/config.ts
+- datetime: 2026-11-03 16:10
+  title: toolGroups option parser (config.ts)
+  tags:
+    - config
+    - routing
+    - resilience
+  change: >-
+    Added groupMap(): validates `toolGroups` as {name: string[]} (trimmed, deduped, empty names/lists and __proto__
+    dropped, non-objects give {}). Wired into resolve() in the next edit.
+  reason: User-extensible tool groups (ticket 0006) with safe defaults.
+  invariant: resolveOptions never throws; unknown option shapes degrade to {}.
+  files:
+    - src/config.ts
+- datetime: 2026-11-03 16:11
+  title: Resolve toolGroups option in resolveOptions
+  tags:
+    - config
+    - routing
+  change: >-
+    resolve() now returns toolGroups: groupMap(o.toolGroups). Completes the toolGroups option (design section 4 gains
+    `toolGroups`; document in README).
+  reason: 'Ticket 0006: groups extensible by option.'
+  invariant: Option is additive to built-in group patterns; never removes defaults.
+  files:
+    - src/config.ts
+- datetime: 2026-11-03 16:11
+  title: Tool groups and glob matching (src/router/tool-groups.ts)
+  tags:
+    - routing
+    - architecture
+  change: >-
+    Added DEFAULT_TOOL_GROUPS (Exploration, Development, Execution, Verification, Research, Delegation, Database (MCP
+    globs *postgres*, *mysql*, ...), Other (no built-in patterns)), case-insensitive whole-id glob matcher (cached,
+    length-capped, never throws), resolveToolGroups(extra) (appends user patterns; unknown name adds a group), groupOf
+    (first match wins, undefined = ungrouped) and askableGroups (groups with patterns).
+  reason: 'Ticket 0006 / story R4.1: code maps groups to tool ids; Jev only judges the groups.'
+  invariant: >-
+    A tool matching no pattern is ungrouped and never excluded. Group names are the closed set used in `tools:<group>`
+    questions.
+  files:
+    - src/router/tool-groups.ts
+- datetime: 2026-11-03 16:11
+  title: 'QA 0005: ad-hoc temp integration probe (removed)'
+  tags:
+    - tests
+    - verification
+    - integration
+  change: >-
+    Created and deleted tests/integration/zz_qa_tmp.int.test.ts (copy of prompt-hook e2e with a Jev mock that answers
+    every asked question). Net file change: none. Findings: skill injection into prompt.skills works on real opencode
+    2.2.5 (agent request carried the decisions skill, title request not); the unmodified opt-in e2e fails because the
+    host exposes 9 user skills and the mock Jev answers only 'model', so finalize() returns null (missing question =
+    failure) and no model switch happens.
+  reason: Ticket 0005 QA verification evidence; defect report to BE.
+  invariant: QA does not leave test files in the repo; client finalize() stays strict (missing answer => null).
+  files:
+    - tests/integration/prompt-hook.int.test.ts
+- datetime: 2026-11-03 16:11
+  title: toolGroupQuestion and TOOL_QUESTION_PREFIX in questions.ts
+  tags:
+    - jev
+    - routing
+  change: >-
+    Added TOOL_QUESTION_PREFIX = "tools:" and toolGroupQuestion({name, description?}) -> noul question (name cut at 80,
+    description at 200 chars).
+  reason: 'Ticket 0006 / story R4.1: one independent noul per tool group in the stage-A batch.'
+  invariant: Question names are tools:<group>; only group metadata (never tool schemas or user files) goes to Jev.
+  files:
+    - src/jev/questions.ts
+- datetime: 2026-11-03 16:11
+  title: 'Tool router: stage-A contributor and removal selection (src/router/tool-router.ts)'
+  tags:
+    - routing
+    - validation
+    - resilience
+  change: >-
+    Added createToolRouter (StageAContributor "tools": one noul tools:<group> per group with patterns; apply uses
+    noulProbability (clamped) -> p < toolThreshold excludes, missing/NaN/wrong-kind keeps; plan.tools = {groups,
+    excluded}; decided only if >=1 usable answer), decideTools, referencedTools (tool-call/tool-result part names incl.
+    namespace spellings) and selectToolRemovals (excluded group, not referenced, not alwaysKeep (globs), not ungrouped;
+    returns [] when it would remove every tool).
+  reason: Ticket 0006 AC 1 and 2, story R4.1-R4.4, design D5.
+  invariant: >-
+    Closed set = asked group names. Unanswered group = kept. selectToolRemovals never returns every tool id. No
+    permission API is used anywhere in this path.
+  files:
+    - src/router/tool-router.ts
+- datetime: 2026-11-03 16:12
+  title: Context hook (stage B shell) and routing note (src/opencode/context-hook.ts)
+  tags:
+    - routing
+    - isolation
+    - resilience
+    - architecture
+  change: >-
+    Added createContextHook + contextHookModule. Non-jev agent: returns before reading anything. jevCode: plan =
+    plans.getForTurn over latestUserKeys (message id, then the text-hash spelling of turnKeyFor); stale/missing =>
+    fallbackPlan; optional ContextStage[] extension point (pruning, 0007) runs first, each failure isolated; excluded
+    groups' tools deleted via selectToolRemovals (atomic, restores on failure); routing note (<=600 chars, starts with
+    [jevCode routing], lists selected skills, available groups, left-out groups; minimal note for non-jev plans)
+    appended as a NEW system part, never twice. No Jev client is used at all: continuations only re-apply the cached
+    plan.
+  reason: Ticket 0006 AC 1-7, story R4.2-R4.4, R6.2-R6.4, design stage B steps 1,4,5.
+  invariant: >-
+    Hook never throws and never calls Jev. Non-jev events are not touched. Existing system parts are never modified.
+    Tools referenced by messages in the request, alwaysKeepTools and ungrouped tools are never deleted; nothing is
+    deleted if every tool would go. No permission/access-rule API is used in this module.
+  files:
+    - src/opencode/context-hook.ts
+- datetime: 2026-11-03 16:12
+  title: Register tool router in promptHookModule contributors
+  tags:
+    - routing
+    - architecture
+  change: promptHookModule contributors are now [modelRouter, skillRouter, toolRouter]; import follows in the next edit.
+  reason: 'Ticket 0006: tool group questions join the single batched stage-A request (R6.1).'
+  invariant: Hook stays contributor-agnostic; exactly one Jev request per jevCode prompt; question names unique (tools:<group>).
+  files:
+    - src/opencode/prompt-hook.ts
+- datetime: 2026-11-03 16:12
+  title: Import createToolRouter in prompt-hook.ts
+  tags:
+    - routing
+  change: Added the createToolRouter import (completes the contributor registration).
+  reason: Compile fix.
+  invariant: Same as the registration decision.
+  files:
+    - src/opencode/prompt-hook.ts
+- datetime: 2026-11-03 16:12
+  title: 'Integration e2e: mock Jev answers every question, isolated HOME, local skill injection assertion'
+  tags:
+    - tests
+    - integration
+  change: >-
+    tests/integration/prompt-hook.int.test.ts: mock Jev now answers every asked question (model -> m-big; skill:<id> ->
+    noul 0.05, except project-local skill 'jev-e2e-skill' -> 0.95; other noul -> 0.95; other choice/score -> filler).
+    Spawned opencode runs (and api get) use an isolated HOME/USERPROFILE/XDG_* under the temp project so the user's
+    global skills do not leak (only host built-ins opencode/report/browser remain). Added a project-local skill
+    (.opencode/skills/jev-e2e-skill/SKILL.md with a marker); asserts it got a skill:* question and its marker is in a
+    model request body. Model requests now record raw JSON body.
+  reason: >-
+    QA defect on ticket 0005: host listed 9 user skills, mock answered only 'model', client.finalize returns null on any
+    unanswered question, so no model switch.
+  invariant: >-
+    src/jev/client.ts stays strict (missing answer => null); the mock must answer all asked questions; test is opt-in
+    and uses temp dirs/ports only.
+  files:
+    - tests/integration/prompt-hook.int.test.ts
+- datetime: 2026-11-03 16:12
+  title: Register contextHookModule in MODULES (src/index.ts)
+  tags:
+    - architecture
+    - routing
+  change: MODULES = [agentModule, promptHookModule, contextHookModule]; comment updated.
+  reason: 'Ticket 0006: install stage B at setup.'
+  invariant: >-
+    index.ts stays wiring-only; a failing module never blocks the others; prompt hook is registered before the context
+    hook.
+  files:
+    - src/index.ts
+- datetime: 2026-11-03 16:13
+  title: 'E2E test: record tool names/system and add tools-minimal Jev mode (types)'
+  tags:
+    - tests
+    - integration
+  change: >-
+    tests/integration/prompt-hook.int.test.ts: ModelRequest gains toolNames/system; jevMode union gains "tools-minimal"
+    (rest of the wiring follows). File written without BOM.
+  reason: Ticket 0006 end-to-end evidence that tools are removed and the note is sent on opencode 2.2.5.
+  invariant: Opt-in test; temp dirs and local ports only.
+  files:
+    - tests/integration/prompt-hook.int.test.ts
+- datetime: 2026-11-03 16:13
+  title: Revert stray jevMode union change in prompt-hook e2e
+  tags:
+    - tests
+    - integration
+  change: >-
+    Reverted my earlier "tools-minimal" addition to jevMode in tests/integration/prompt-hook.int.test.ts (file is
+    concurrently edited for ticket 0005); the tool/context e2e goes into its own file
+    tests/integration/context-hook.int.test.ts. The earlier decision about recording toolNames/system there did not take
+    effect beyond that union edit.
+  reason: Avoid clobbering parallel edits to the shared e2e file.
+  invariant: 'Net effect on prompt-hook.int.test.ts: none from ticket 0006.'
+  files:
+    - tests/integration/prompt-hook.int.test.ts
+- datetime: 2026-11-03 16:13
+  title: tool-router.ts header comment wording
+  tags:
+    - routing
+  change: >-
+    Reworded the header comment so the word "permission" does not appear in the router/hook files (grep-able AC 7).
+    Comment only.
+  reason: 'AC 7: no permission API usage must be verifiable by grep.'
+  invariant: >-
+    No behaviour change; tool-groups.ts, tool-router.ts and context-hook.ts must not mention permission APIs (a test
+    greps for it).
+  files:
+    - src/router/tool-router.ts
+- datetime: 2026-11-03 16:13
+  title: Tool groups and tool router unit tests
+  tags:
+    - tests
+    - routing
+  change: >-
+    Added tests/router/tool-router.test.ts: glob matching, built-in/extended groups, ungrouped tools, option parsing,
+    decideTools (threshold, clamping, NaN/wrong kind/missing), contributor questions/apply, referencedTools,
+    selectToolRemovals (alwaysKeep globs, referenced, would-empty) and a grep test that the three source files never
+    mention permissions.
+  reason: Ticket 0006 AC 1, 2, 7.
+  invariant: Fakes only. The never-removes-every-tool and no-permission-grep tests must stay.
+  files:
+    - tests/router/tool-router.test.ts
+- datetime: 2026-11-03 16:14
+  title: Context hook unit tests
+  tags:
+    - tests
+    - routing
+    - isolation
+    - resilience
+  change: >-
+    Added tests/router/context-hook.test.ts: filtering (excluded groups, alwaysKeep, referenced tools, stage pruning,
+    failing stage, user groups, would-empty, odd tools values), isolation for build/plan/near-miss/unset agents
+    (deep-equal + plan cache never consulted), hostile events, pipeline with the real prompt hook + counting stub client
+    (1 ask over 4 continuations, same filtering), stale/missing/other-session plans, text-hash turn key, Jev failure,
+    routing note (new part, existing parts untouched, no duplicate, <=600 chars, minimal note).
+  reason: Ticket 0006 AC 1-6.
+  invariant: Fakes only. The deep-equal isolation test and the continuation ask-count test must stay.
+  files:
+    - tests/router/context-hook.test.ts
+- datetime: 2026-11-03 16:15
+  title: Opt-in e2e test for tool routing and the context hook
+  tags:
+    - tests
+    - integration
+    - routing
+  change: >-
+    Added tests/integration/context-hook.int.test.ts (skipped unless OPENCODE_INTEGRATION=1) with its own mock
+    provider/Jev servers and isolated HOME: asserts tool group questions in the single batched request, full tool set +
+    routing note when all groups are kept, removed tools + note when only Exploration is kept (turnKey matches the real
+    context event), and a build prompt untouched with zero Jev requests.
+  reason: >-
+    Ticket 0006: real-host evidence on opencode 2.2.5; separate file because tests/integration/prompt-hook.int.test.ts
+    is edited in parallel for ticket 0005.
+  invariant: Opt-in only; temp dirs and local ports only; no credentials.
+  files:
+    - tests/integration/context-hook.int.test.ts
+- datetime: 2026-11-03 16:20
+  title: Token budget helpers (src/context/token-budget.ts)
+  tags:
+    - routing
+    - context
+  change: >-
+    Added estimateTokens/tokensFromChars (chars/4), contextBudget(planMax, modelContext, 0.6) (min of both; Infinity
+    when neither is known) and fitToBudget(units,{budget,minScore}): forced units always kept, others need score >=
+    minScore, then the lowest-scored (oldest on ties) are dropped while over budget; reports overBudget when forced
+    units alone exceed it.
+  reason: 'Ticket 0007 / design section 5: budget fit drops the lowest-scored units first and never drops forced units.'
+  invariant: fitToBudget never drops a forced unit, even over budget. All helpers are total (never throw).
+  files:
+    - src/context/token-budget.ts
+- datetime: 2026-11-03 16:20
+  title: 'Collector: heuristic active files / completed work / issues (src/context/collector.ts)'
+  tags:
+    - routing
+    - context
+  change: >-
+    Added message helpers (isRecord, clip, partsOf, textOfMessage) and heuristics: filesOfInput (known path keys + patch
+    headers), collectActiveFiles (tool-call inputs newest first, then paths in user text), collectCompletedWork
+    (successful write/run tool calls, clipped), collectUnresolvedIssues (error results, clipped previews), previewResult
+    (first chars only).
+  reason: 'Ticket 0007 / story R5.1: the ConversationState sent to Jev is compact and never contains full tool outputs.'
+  invariant: Tool output bodies are never copied beyond a ~100-char preview; all functions are total.
+  files:
+    - src/context/collector.ts
+- datetime: 2026-11-03 16:20
+  title: Message grouping into units (src/context/message-groups.ts)
+  tags:
+    - routing
+    - context
+    - resilience
+  change: >-
+    Added groupMessages: contiguous units that start at each user message (leading messages = first unit), merged across
+    any tool id whose call/result parts span a boundary (pairs are indivisible), split further at pair-free points above
+    unitMaxTokens (default 6000), with unique stable ids (message id else m<idx>-<hash>), token estimates and <=160-char
+    summaries (user text, tool names, files). Also messageTokens, hasCompactionPart, findOrphans (result before/without
+    call, call without later result), conversationTokens.
+  reason: >-
+    Ticket 0007 / design D7 and unit grouping invariants: prune on units, never separate a tool-call from its
+    tool-result.
+  invariant: >-
+    Units are contiguous, cover every message exactly once and no tool id spans two units. groupMessages never throws
+    and never mutates its input.
+  files:
+    - src/context/message-groups.ts
+- datetime: 2026-11-03 16:20
+  title: 'message-groups.ts: tidy summary fallback and imports'
+  tags:
+    - context
+  change: >-
+    Readable role-based summary fallback when a unit has no user text; (removing an unused re-export and import
+    follows).
+  reason: Code clarity; no behaviour change.
+  invariant: Summary stays <= 160 chars and never contains tool output.
+  files:
+    - src/context/message-groups.ts
+- datetime: 2026-11-03 16:20
+  title: 'message-groups.ts: remove unused re-export'
+  tags:
+    - context
+  change: Removed the stray `export { estimateTokens }`; the unused import is dropped next.
+  reason: Cleanup.
+  invariant: No behaviour change.
+  files:
+    - src/context/message-groups.ts
+- datetime: 2026-11-03 16:21
+  title: 'message-groups.ts: drop unused import'
+  tags:
+    - context
+  change: Import now only charLength and tokensFromChars from token-budget.ts.
+  reason: Cleanup.
+  invariant: No behaviour change.
+  files:
+    - src/context/message-groups.ts
+- datetime: 2026-11-03 16:21
+  title: 'Safe prune: forced units, drop and post-condition (src/context/prune.ts)'
+  tags:
+    - routing
+    - context
+    - resilience
+    - validation
+  change: >-
+    Added analyze (units + forced flags: system, leading messages, latest user and after, last keepRecentMessages,
+    compaction parts, first user when keepFirstUser, non-object messages; a unit is forced when any message is),
+    checkPrune (forced and latest-user-tail kept, no NEW orphan tool parts vs the original, first non-system role
+    unchanged) and applyDrop (new array of the same message objects; the original array when nothing dropped; null when
+    the check fails).
+  reason: >-
+    Ticket 0007 / story R5.3, design D7: pruning must never orphan a tool part or lose forced messages; a failed
+    post-condition discards the prune.
+  invariant: >-
+    Input arrays/messages are never mutated; forced units are never dropped whatever the drop set; any post-condition
+    failure returns null (use the original messages).
+  files:
+    - src/context/prune.ts
+- datetime: 2026-11-03 16:21
+  title: 'Distiller: compact ConversationState (src/context/distiller.ts)'
+  tags:
+    - routing
+    - context
+    - jev
+  change: >-
+    Added distill({messages, candidates, totalTokens, maxChars=9000}) -> {state, included}: objective (first user text),
+    currentRequest (latest), activeFiles, completedWork, unresolvedIssues, contextCandidates ({id, summary, tokens}),
+    totalTokens; progressively shrinks fields and finally drops the oldest candidates until JSON length <= maxChars;
+    never includes tool output bodies (only collector previews).
+  reason: >-
+    Ticket 0007 / story R5.1: Jev gets a compact state, never the transcript; the Jev client truncates state at 12000
+    chars which would break JSON, so the distiller stays below.
+  invariant: >-
+    Serialised state <= maxChars (default 9000 < STATE_MAX_CHARS 12000). Candidates dropped for size are reported via
+    `included` and must not be asked about.
+  files:
+    - src/context/distiller.ts
+- datetime: 2026-11-03 16:21
+  title: contextUnitQuestion and CONTEXT_QUESTION_PREFIX in questions.ts
+  tags:
+    - jev
+    - routing
+    - context
+  change: >-
+    Added CONTEXT_QUESTION_PREFIX = "unit:", CONTEXT_SCORE_LEVELS (5 levels, scores 0..4) and contextUnitQuestion({id,
+    summary?}) -> score question.
+  reason: 'Ticket 0007: one score question per history unit in the stage-B request.'
+  invariant: Question names are unit:<id>; only ids and short summaries go to Jev, never message bodies.
+  files:
+    - src/jev/questions.ts
+- datetime: 2026-11-03 16:21
+  title: TurnPlan.context gains droppedUnitIds
+  tags:
+    - routing
+    - architecture
+    - context
+  change: >-
+    Added optional droppedUnitIds to TurnPlan.context (additive to design section 4; TL to mirror in design.md).
+    Continuations drop exactly these units, so units unknown at first call (appended during the turn) are always kept.
+  reason: 'Ticket 0007: "new messages created during the turn are always kept" cannot be derived from keepUnitIds alone.'
+  invariant: Optional field; existing consumers unaffected. keepUnitIds stays the kept (scored+forced) set per design.
+  files:
+    - src/router/plan.ts
+- datetime: 2026-11-03 16:21
+  title: Shared Jev client factory (src/opencode/jev-client.ts)
+  tags:
+    - jev
+    - architecture
+    - routing
+  change: >-
+    Added jevClientFor(ctx, options, log): one createJevClient per host ctx (WeakMap), with listModels/generateDecisions
+    wired to ctx.model.list / ctx.experimental.generate.decisions. Hoisted out of promptHookModule so the context hook
+    module (stage B pruning) shares it.
+  reason: 'Ticket 0007: the context stage needs a Jev client; avoid two clients resolving transports separately.'
+  invariant: Client is per-ctx and never throws (createJevClient contract). Secrets are registered by createJevClient.
+  files:
+    - src/opencode/jev-client.ts
+- datetime: 2026-11-03 16:22
+  title: promptHookModule uses the shared Jev client factory
+  tags:
+    - jev
+    - architecture
+  change: >-
+    promptHookModule.init now calls jevClientFor(ctx, options, log) instead of building its own client (import fix
+    follows).
+  reason: 'Ticket 0007: share one client with the context hook.'
+  invariant: createPromptHook itself is unchanged; exactly one Jev request per jevCode prompt in stage A.
+  files:
+    - src/opencode/prompt-hook.ts
+- datetime: 2026-11-03 16:22
+  title: prompt-hook.ts import of jevClientFor
+  tags:
+    - jev
+  change: Replaced createJevClient value import with type-only JevClient and the jevClientFor import.
+  reason: Compile fix for the shared client.
+  invariant: No behaviour change.
+  files:
+    - src/opencode/prompt-hook.ts
+- datetime: 2026-11-03 16:22
+  title: Context router stage (src/router/context-router.ts)
+  tags:
+    - routing
+    - context
+    - jev
+    - resilience
+    - validation
+  change: >-
+    Added createContextRouter -> ContextStage "context-prune" and createContextWindowLookup. Only plans with source
+    "jev"; first call of a turn with >= pruneMinTokens (else zero Jev calls): analyze units (forced never asked), <=60
+    score questions (newest 30 individual, older merged), ONE client.ask with the distilled state; answers validated
+    (closed set, clamped score 0..4, confidence >= contextMinConfidence else unanswered => kept); keep score >= 2;
+    fitToBudget under min(plan.maxTokens, window*0.6); applyDrop post-condition; decision memoised per plan (WeakMap +
+    in-flight dedupe) and written to plan.context; continuations re-apply droppedUnitIds with no Jev call (unknown/new
+    units kept); Jev failure/null/low confidence/failed check => original messages. Never mutates input beyond assigning
+    event.messages.
+  reason: Ticket 0007 / story R5, design stage B steps 3-5 and D7.
+  invariant: >-
+    At most one Jev request per turn from this stage; continuations zero. Only validated unit ids from the asked set
+    influence the result; forced units are never dropped; fail-open on any error.
+  files:
+    - src/router/context-router.ts
+- datetime: 2026-11-03 16:23
+  title: contextHookModule installs the context router stage
+  tags:
+    - routing
+    - architecture
+    - context
+  change: >-
+    ContextHookCtx now extends JevClientCtx; contextHookModule.init builds [createContextRouter({options, log, client:
+    jevClientFor(...), contextWindow: createContextWindowLookup(ctx.model.list)})] and passes it as stages (imports and
+    a try/catch around stage creation follow).
+  reason: 'Ticket 0007: wire pruning into the stage-B extension point from ticket 0006 without changing createContextHook.'
+  invariant: createContextHook stays stage-agnostic; a failure creating the stage must not disable tool filtering.
+  files:
+    - src/opencode/context-hook.ts
+- datetime: 2026-11-03 16:23
+  title: 'context-hook module: guarded stage creation'
+  tags:
+    - resilience
+    - context
+  change: Stage creation in contextHookModule.init is wrapped in try/catch (stages stay [] on failure).
+  reason: 'Fail open: pruning problems must not disable tool filtering.'
+  invariant: Same as previous decision.
+  files:
+    - src/opencode/context-hook.ts
+- datetime: 2026-11-03 16:23
+  title: context-hook.ts imports for the context router
+  tags:
+    - context
+  change: Added imports of createContextRouter, createContextWindowLookup, jevClientFor, JevClientCtx.
+  reason: Compile fix for the module wiring.
+  invariant: Type-only cycle between context-hook.ts and context-router.ts (ContextStage type); no runtime cycle.
+  files:
+    - src/opencode/context-hook.ts
+- datetime: 2026-11-03 16:23
+  title: 'Test helpers: seeded conversation generator (tests/context/gen.ts)'
+  tags:
+    - tests
+    - context
+  change: >-
+    Added mulberry32 rng, deepFreeze, message builders and genConversation: random well-formed conversations
+    (system/compaction messages, tool calls with unique ids, results
+    merged/split/reversed/interleaved/provider-executed, messages with and without ids).
+  reason: 'Ticket 0007 AC 1: property test with >= 500 seeded cases (no fast-check dependency added).'
+  invariant: Generated conversations must be orphan-free (the property tests assert this sanity check). Deterministic by seed.
+  files:
+    - tests/context/gen.ts
+- datetime: 2026-11-03 16:24
+  title: Property tests for safe pruning (tests/context/prune.property.test.ts)
+  tags:
+    - tests
+    - context
+    - resilience
+  change: >-
+    600 seeded random conversations x random drop sets on deep-frozen input (no orphans, all forced messages and the
+    latest-user tail present, order preserved, forced units never reported dropped, refusal only allowed for split
+    units); 600 random end-to-end runs of the stage with random scores/confidence/null/unanswered/wrong-kind answers
+    (<=1 ask, <=60 questions, continuation re-applies identical drops with no extra ask); unit-grouping invariants;
+    checkPrune negative cases.
+  reason: Ticket 0007 AC 1 and 2 (>= 500 cases, deep-frozen inputs).
+  invariant: Keep >= 500 cases and deep freeze. Deterministic seeds.
+  files:
+    - tests/context/prune.property.test.ts
+- datetime: 2026-11-03 16:24
+  title: Unit tests for token budget, grouping, forced messages, collector, distiller
+  tags:
+    - tests
+    - context
+  change: >-
+    Added tests/context/context.test.ts: estimates and budget formula; fitToBudget (lowest score first, oldest on ties,
+    forced never dropped, over-budget flag); units (ids, summaries without tool output, hash ids, duplicate ids, pairs
+    spanning a user message, splitting big units, garbage input); forced-message rules; applyDrop identity/no-drop;
+    distiller with a 500-message conversation (cap, no tool bodies), tight caps, collector heuristics.
+  reason: Ticket 0007 AC 6 and 7 (and supporting coverage of AC 1-2).
+  invariant: Fakes only; no network.
+  files:
+    - tests/context/context.test.ts
+- datetime: 2026-11-03 16:25
+  title: 'collector.ts: non-array guards'
+  tags:
+    - resilience
+    - context
+  change: >-
+    collectActiveFiles/collectCompletedWork/collectUnresolvedIssues return [] for a non-array input (written as UTF-8
+    without BOM).
+  reason: Totality (never throw) found by a unit test.
+  invariant: All collector functions are total.
+  files:
+    - src/context/collector.ts
+- datetime: 2026-11-03 16:25
+  title: 'context.test.ts: fix expected length'
+  tags:
+    - tests
+  change: Expected 3 messages after dropping the 2-message first unit (test arithmetic).
+  reason: Test bug.
+  invariant: None.
+  files:
+    - tests/context/context.test.ts
+- datetime: 2026-11-03 16:25
+  title: 'context.test.ts: tool-body assertion matches the preview design'
+  tags:
+    - tests
+  change: >-
+    The no-full-tool-body assertion now checks that no 10x repeated body fragment appears and that issue previews stay
+    <=130 chars (previews of error results are intentionally allowed).
+  reason: >-
+    Original assertion was stricter than the design (short previews of failing tool results are part of
+    unresolvedIssues).
+  invariant: Previews <= ~100 chars of body; full bodies never included.
+  files:
+    - tests/context/context.test.ts
+- datetime: 2026-11-03 16:26
+  title: Context router unit tests (tests/router/context-router.test.ts)
+  tags:
+    - tests
+    - routing
+    - context
+    - resilience
+    - isolation
+  change: >-
+    Added tests: below pruneMinTokens (zero asks, same array), fallback plan, hostile events; first call = ONE request
+    with score questions only for non-forced units, whole-unit drops with intact pairs, frozen inputs; continuations
+    (zero asks, same drops, appended messages kept); remembered no-op decision; concurrent first calls share one ask;
+    Jev null/throw/low confidence/garbage answers fail open; token budget with a small context window (lowest scores
+    first, forced kept) and the window lookup; 500-message conversation <=60 questions with merged groups; inside the
+    context hook (prune then tool filtering, build agent isolation, stale plan).
+  reason: Ticket 0007 AC 2-5.
+  invariant: Fakes only. The one-ask-per-turn and zero-ask-for-build tests must stay.
+  files:
+    - tests/router/context-router.test.ts
+- datetime: 2026-11-03 16:27
+  title: Opt-in e2e test for context pruning (tests/integration/context-prune.int.test.ts)
+  tags:
+    - tests
+    - integration
+    - routing
+    - context
+  change: >-
+    Added an opt-in (OPENCODE_INTEGRATION=1) test with its own mock provider/Jev servers and isolated HOME: one session
+    over several `run --continue` turns with pruneMinTokens 1, keepRecentMessages 1, keepFirstUser false. Asserts: no
+    stage-B request on a one-message conversation; exactly one unit:* score request on a later turn and, when Jev scores
+    old units 0, the model request lacks the old topics but has the latest; next turn with scores 4 sends the old topics
+    again (persisted history untouched); build turn makes zero Jev requests and sends everything.
+  reason: 'Ticket 0007: real-host evidence on opencode 2.2.5.'
+  invariant: Opt-in only; temp dirs and local ports only; no credentials.
+  files:
+    - tests/integration/context-prune.int.test.ts
+- datetime: 2026-11-03 16:28
+  title: design.md synced with implemented tickets 0006/0007 and host facts
+  tags:
+    - architecture
+    - context
+    - routing
+    - config
+    - distribution
+  change: >-
+    design.md: added host facts F15-F17 (plugin entries must be {package, options}; local plugins at
+    .opencode/plugins/<name>/index.ts; BOM in package.json silently skips the plugin); jev-client.ts in module layout;
+    TurnPlan.context.droppedUnitIds and memoisation; toolGroups option plus built-in tool group table and semantics;
+    constants table (keep score 2, unit split cap 6000 tokens, max 60 score questions, budget formula, 9000-char state
+    cap); stage B skipped for fallback plans; shared Jev client note; keepFirstUser option listed.
+  reason: >-
+    design.md must not lie about the implementation (TL rule: keep design aligned with reality); verified against
+    src/router/plan.ts, tool-groups.ts, context-router.ts, config.ts, opencode/jev-client.ts and prior decisions.
+  invariant: >-
+    design.md describes the code as implemented; constants stay in sync with src; stage B never prunes for non-jev
+    plans; continuations drop only droppedUnitIds.
+  files:
+    - specs/jev-code-router/design.md
+- datetime: 2026-11-03 16:29
+  title: Full README for opencode-jevcode
+  tags:
+    - docs
+    - README
+    - '0008'
+    - distribution
+  change: >-
+    Replaced the README stub with the full README: install (plugins {package, options} object, local
+    .opencode/plugins/<name>/index.ts), jevCode agent behaviour, Jev providers and env keys, every option from
+    src/config.ts with defaults, models allowlist recommendation, toolGroups, pruning, fail-open guarantees, limits (12
+    candidates, >30 skills prefilter, English-only, fallbackModel unused), privacy note, troubleshooting (canary,
+    agentFileFallback, no BOM, stderr not shown by api get), tests incl. OPENCODE_INTEGRATION=1 and isolated HOME, npm
+    pack check.
+  reason: >-
+    Story R10 / ticket 0008 AC: a reviewer must be able to configure the plugin from the README alone; PM carry-over
+    notes require the listed items.
+  invariant: >-
+    README option names/defaults must match src/config.ts DEFAULTS; no secrets in README; file is UTF-8 without BOM; the
+    tarball ships README.md (package.json files list).
+  files:
+    - README.md
+- datetime: 2026-11-03 16:29
+  title: 'README: remove unverified log-file claim'
+  tags:
+    - docs
+    - README
+    - '0008'
+  change: Removed the unverified "log file OpenCode keeps" mention from the troubleshooting stderr paragraph.
+  reason: Only documented, verified behaviour belongs in the README.
+  invariant: README must state only verified behaviour; logs go to stderr of the OpenCode process.
+  files:
+    - README.md
+- datetime: 2026-11-03 16:29
+  title: 'README: local plugin needs resolvable package'
+  tags:
+    - docs
+    - README
+    - '0008'
+  change: >-
+    Clarified that the local plugin re-export needs the package resolvable from the project (npm install) or a copy of
+    src/.
+  reason: The re-export example would fail without the package installed.
+  invariant: Local plugin layout stays .opencode/plugins/<name>/index.ts; bare .ts in plugins array is not loaded.
+  files:
+    - README.md
+- datetime: 2026-11-03 16:37
+  title: 'QA 0008: opt-in publish-readiness e2e (tests/e2e/publish-readiness.int.test.ts)'
+  tags:
+    - tests
+    - integration
+    - resilience
+    - isolation
+    - '0008'
+  change: >-
+    Added tests/e2e/publish-readiness.int.test.ts (OPENCODE_INTEGRATION=1 only; JEVCODE_E2E_PLUGIN selects another
+    plugin directory such as the unpacked tarball). Asserts on real opencode 2.2.5 with mock provider + mock Jev:
+    /api/agent lists jevCode only with the plugin; build-prompt model request bodies are identical with the plugin
+    enabled vs removed (0 Jev requests); jevCode completes the turn on the kept model when Jev answers 500, hangs past
+    timeoutMs, is unreachable (closed port) or provider is none.
+  reason: Ticket 0008 AC 3 and 4 were only partly evidenced (existing e2e covered a 400 and no byte-level build comparison).
+  invariant: Opt-in only; temp dirs, isolated HOME and local ports only; no credentials; no source changes.
+  files:
+    - tests/e2e/publish-readiness.int.test.ts
+- datetime: 2026-11-03 16:37
+  title: 'QA 0008: e2e test typecheck fix'
+  tags:
+    - tests
+    - '0008'
+  change: closedPort = probe.port ?? 0 (Bun.serve port type is number | undefined under strict tsc).
+  reason: tsc --noEmit must stay green (tsconfig includes tests).
+  invariant: No behaviour change.
+  files:
+    - tests/e2e/publish-readiness.int.test.ts
+- datetime: 2026-11-03 16:39
+  title: 'README (QA 0008): plugin add writes the global config'
+  tags:
+    - docs
+    - README
+    - '0008'
+  change: >-
+    Install section now says `opencode plugin add` installs into the GLOBAL OpenCode config; project-only or optioned
+    use is by hand in opencode.jsonc.
+  reason: >-
+    Verified on opencode 2.2.5: `plugin add --help` says "add it to the global configuration"; the old text implied it
+    could be project-level.
+  invariant: README states only verified behaviour.
+  files:
+    - README.md
+- datetime: 2026-11-03 16:40
+  title: 'README (QA 0008): privacy note matches the real stage-B request body'
+  tags:
+    - docs
+    - README
+    - '0008'
+    - security
+  change: >-
+    Privacy section rewritten from captured request bodies and src/context/distiller.ts + collector.ts: stage-B state
+    also carries objective (<=400 chars), currentRequest (<=600), activeFiles (<=12), completedWork (<=10 lines, shell
+    commands included), unresolvedIssues (<=5, ~100 chars of failing tool output), per-unit summaries; skill description
+    limit 300 chars; 'Never sent' list no longer claims tool outputs are never sent (previews of failing ones are) and
+    warns that commands/paths are sent.
+  reason: >-
+    The old 'never sent: tool outputs' and unit-summary-only description were inaccurate versus the actual request body
+    (QA verified with a captured Jev request on opencode 2.2.5).
+  invariant: README privacy lists must match what distiller/collector/questions actually send; update together with those files.
+  files:
+    - README.md
+- datetime: 2026-11-03 16:40
+  title: 'README (QA 0008): state size limit wording'
+  tags:
+    - docs
+    - README
+    - '0008'
+  change: >-
+    Limits: stage-B state is kept under ~9,000 chars (distiller DISTILL_MAX_CHARS), hard cap 12,000 (client
+    STATE_MAX_CHARS).
+  reason: Matches distiller.ts / client.ts constants.
+  invariant: Keep in sync with DISTILL_MAX_CHARS and STATE_MAX_CHARS.
+  files:
+    - README.md
+- datetime: 2026-11-03 16:40
+  title: 'README (QA 0008): first-start 503 note, test commands include tests/e2e'
+  tags:
+    - docs
+    - README
+    - '0008'
+  change: >-
+    Troubleshooting: added the first-start note (name-based install into OpenCode's cache can exceed a short-lived `api
+    get`: 503 'Location plugins did not finish activating'; retry after the server ran a few seconds). Peer-dependency
+    line says OpenCode supplies it at runtime. Test section: `bun test` with OPENCODE_INTEGRATION=1 now runs
+    tests/integration and tests/e2e.
+  reason: >-
+    Observed on opencode 2.2.5 with a registry-installed plugin; the old command `bun test tests/integration` would skip
+    the new tests/e2e suite. UTF-8 without BOM kept.
+  invariant: README file is UTF-8 without BOM; commands in it were executed by QA.
+  files:
+    - README.md
+- datetime: 2026-11-03 16:42
+  title: 'QA 0008 publish blockers: skill capability skips HTML comments; version 0.1.1; optional peer'
+  tags:
+    - distribution
+    - routing
+    - tests
+    - '0008'
+  change: >-
+    capabilityOf strips HTML comments (<!-- ... -->, multi-line, unterminated up to scan limit) before picking the first
+    prose paragraph. package.json version 0.1.0 -> 0.1.1 and peerDependenciesMeta {"@opencode/plugin": {optional: true}}
+    added, written as UTF-8 without BOM. Unit test added in tests/router/skill-router.test.ts.
+  reason: >-
+    QA found 0.1.0 already on npm, host provides @opencode/plugin at runtime (no install-time peer warning), and an HTML
+    comment first paragraph produced a junk capability line.
+  invariant: >-
+    package.json is UTF-8 without BOM; capabilityOf stays total and returns at most 200 chars; skill Markdown is never
+    sent in full.
+  files:
+    - src/router/skill-router.ts
+    - tests/router/skill-router.test.ts
+    - package.json
+- datetime: 2026-11-03 16:42
+  title: 'skill-router test: HTML comment capability cases'
+  tags:
+    - tests
+    - routing
+    - '0008'
+  change: Added a unit test for capabilityOf with single-line, multi-line, unterminated and post-front-matter HTML comments.
+  reason: Covers the QA 0008 heuristic fix.
+  invariant: capabilityOf never returns comment text.
+  files:
+    - tests/router/skill-router.test.ts
+- datetime: 2026-11-03 16:43
+  title: 'PM: close 0008; defer 0009 and 0010 to post-v0.1'
+  tags:
+    - '0008'
+    - routing
+  change: >-
+    Ticket 0008 closed after QA pass (7/7 AC) and the publish-blocker fixes. Tickets 0009 (compaction) and 0010
+    (analytics) stay in 'depend' as post-v0.1 work with notes on restart conditions.
+  reason: >-
+    Both are explicit 'Later' phases. 0009 design is not ready (needs a hook probe and BSA to detail R8.1). Starting
+    them would add risk to the 0.1.1 release.
+  invariant: 0009 and 0010 do not start until PM re-prioritises. Only PM closes tickets.
+  files:
+    - specs/jev-code-router/tickets/0008-qa-e2e-and-publish-readiness.yaml
+    - specs/jev-code-router/tickets/0009-jev-assisted-compaction.yaml
+    - specs/jev-code-router/tickets/0010-routing-analytics.yaml

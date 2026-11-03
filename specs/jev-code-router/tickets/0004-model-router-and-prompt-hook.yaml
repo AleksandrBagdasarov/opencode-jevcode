@@ -1,0 +1,141 @@
+title: 'Phase 2: dynamic coding-model selection, TurnPlan cache and prompt hook (stage A)'
+status: closed
+depends:
+  - 0002-jevcode-agent-and-isolation.yaml
+  - 0003-jev-client-and-transports.yaml
+tags:
+  - BE
+  - TL
+  - QA
+next_responsibility: PM
+scope: >-
+  src/router/plan.ts, src/router/model-router.ts, src/opencode/prompt-hook.ts,
+  src/state/session-state.ts (plan cache), tests. Out of scope: skills, tool groups, context pruning
+  (later tickets plug into the same batched request).
+description: >-
+  Implements story R2, R6.1-R6.3 and design D3/D5/D6, stage A. Build the model candidate catalog
+  from ctx.model.list() (enabled, active status, type chat, capabilities.tools) or from the `models`
+  allowlist, each with provider, id, context window, price and a plugin profile
+  (fast/balanced/reasoning/large-context derived from price/context unless configured). Cap
+  candidates (<= 12). Ask Jev one `choice` question over candidate keys plus `keep`; map the answer
+  back to a validated candidate; below modelMinConfidence or failure => keep current model. Call
+  ctx.session.switchModel only when different; record {previous, applied} via the restore memory
+  from 0002. The prompt hook resolves the agent (0002), exits for non-jev agents (after running
+  restore), builds/stores the TurnPlan, and is structured so skills and tool groups (0005/0006) add
+  questions to the SAME batched request. SPIKE FIRST: verify with a real opencode 2.2.5 run (a mock
+  OpenAI-compatible provider registered with ctx.provider.transform or a configured cheap model)
+  that calling switchModel inside the prompt hook (a) does not deadlock and (b) takes effect for
+  that same prompt's model request. If not, implement the documented fallback from design section 5
+  and log an ADR with the evidence. Hook callbacks must never throw.
+notes: >-
+  TL consulted if the spike shows switchModel cannot work in the prompt hook. Candidate profiles are
+  plugin-defined, not OpenCode categories.
+
+  [2026-11-03T15:06:16.492Z] CRITERION 0 false → true: Spike result (works in-hook, or fallback
+  needed) is recorded as a decision with evidence (logs or captured API output)
+
+  [2026-11-03T15:06:16.604Z] CRITERION 1 false → true: With a fake ctx and a stub Jev client, a
+  jevCode prompt that gets choice X (confidence >= threshold) results in exactly one switchModel
+  call with X; X equal to the current model results in zero calls
+
+  [2026-11-03T15:06:17.138Z] CRITERION 2 false → true: A Jev answer outside the candidate set, below
+  modelMinConfidence, `keep`, null (failure) or a timeout results in zero switchModel calls and a
+  fallback TurnPlan with a reason
+
+  [2026-11-03T15:06:17.672Z] CRITERION 3 false → true: Candidate catalog excludes disabled,
+  deprecated, non-chat and no-tools models, is capped at 12, and honours the `models` allowlist
+  (unit tests)
+
+  [2026-11-03T15:06:18.245Z] CRITERION 4 false → true: A prompt for agent build (or any non-jev
+  agent) performs zero Jev calls and zero plan creation but still runs restore (unit test; asserts
+  the stub client was never called)
+
+  [2026-11-03T15:06:18.780Z] CRITERION 5 false → true: TurnPlan is stored per sessionID with
+  turnKey; a second prompt in the same session replaces it (unit test)
+
+  [2026-11-03T15:06:19.228Z] CRITERION 6 false → true: End-to-end on opencode 2.2.5 with a mock
+  provider: after a jevCode prompt the session's model equals Jev's choice and the model request
+  used it (captured evidence in the ticket notes)
+
+  [2026-11-03T15:06:34.652Z] HAND-OFF BE → QA: BE done, all 7 AC toggled. Files: src/router/plan.ts
+  (TurnPlan, fallbackPlan, turnKeyFor, shared turnPlans cache, StageAContributor contract),
+  src/router/model-router.ts (candidates<=12, allowlist, profiles, choice question, pickChoice
+  mapping), src/opencode/prompt-hook.ts (hook + promptHookModule, registered in src/index.ts),
+  src/state/session-state.ts (createPlanCache, separate section). Tests:
+  tests/router/{model-router,prompt-hook}.test.ts (unit, fakes) + opt-in e2e
+  tests/integration/prompt-hook.int.test.ts (OPENCODE_INTEGRATION=1). Verified: bun test 203 pass/12
+  skip/0 fail, bunx tsc --noEmit clean, OPENCODE_INTEGRATION=1 bun test tests/integration 8/8 pass.
+
+  E2E evidence (opencode 2.2.5, mock provider + mock TypeSafe, models allowlist = 3 mocks): jevCode
+  run started on mock/m-small, Jev chose mock/m-big -> 1 batched Jev request (choice over mock/* +
+  keep, Bearer ts-... header), model requests [m-big, m-big], /api/session model = mock/m-big. `run
+  --continue --agent build` -> 0 Jev requests, session restored to mock/m-small, request used
+  m-small. Fresh build run -> 0 Jev requests. Jev HTTP 400 -> model stays m-mid, exit 0. Spike:
+  switchModel inside the prompt hook works for the same prompt, no deadlock; design section 5
+  fallback not needed (ADR logged).
+
+  Behaviour notes for QA: (1) fallbackModel option is intentionally unused in stage A (failure/keep
+  = current model). (2) Without a `models` allowlist the candidate list is capped at 12 (current
+  model pinned, round-robin over fast/balanced/reasoning/large-context, newest first) - a real
+  install with ~45 models only offers 12; document the allowlist in README. (3) A `keep` answer
+  yields a fallback plan with reason 'Jev chose to keep the current model' per AC; later tickets:
+  plan.source becomes 'jev' whenever any contributor decides. (4) Host session model carries variant
+  'default'; applied model is stored as read back from the session so restore equality holds. (5)
+  Local plugin files must live in .opencode/plugins/<name>/index.ts (bare .ts in plugins array not
+  loaded). (6) With provider=none / no key the hook still runs, makes no Jev call that succeeds, and
+  stores a fallback plan.
+
+  For 0005/0006: add a StageAContributor to the contributors array in promptHookModule (questions
+  prefixed skill:/tools:, apply fills plan.skills/plan.tools; prompt.skills is exposed on
+  StageAInput.prompt); context hook reads turnPlans.getForTurn(sessionID, latestUserMessageId). Jev
+  client is created inside promptHookModule - hoist it to a shared factory if the context hook
+  (0007) needs the same instance.
+
+  [2026-11-03T15:07:47.393Z] HAND-OFF QA → PM: QA PASS, all 7 AC verified. Evidence: bun test 211
+  pass/0 fail, tsc --noEmit clean, OPENCODE_INTEGRATION=1 bun test tests/integration 8/8 pass (e2e
+  on opencode 2.2.5: jevCode run switched to m-big with 1 batched Jev request and both model
+  requests on m-big; --continue --agent build restored m-small with 0 Jev calls; fresh build run
+  made 0 Jev calls; Jev 400 kept m-mid, exit 0). Code review: the hook never throws (outer
+  try/catch, guarded log.warn and plans.set in finally); fail-open on
+  null/timeout/outside-set/low-confidence/keep gives a fallback plan with a reason; non-jev agents
+  only call restoreIfNeeded (zero ask, zero plan); the closed candidate set is validated through
+  pickChoice; switchModel is called only when the id differs; the plan cache replaces per session
+  and getForTurn checks turnKey. package.json has no BOM (starts 0x7B). Residual risks
+  (non-blocking): the cap of 12 candidates without a `models` allowlist hides models on real
+  installs (README should document it); fallbackModel is unused in stage A (by design); the
+  entry-test warnings come from fake ctx and are expected. No source edits were made by QA. PM may
+  close.
+
+  [2026-11-03T15:08:04.948Z] HAND-OFF PM → PM: PM CLOSE: all 7 AC done: true; QA pass (bun test 211
+  pass, integration 8/8, tsc clean); spike ADR logged. Residual risks forwarded to 0008 (models
+  allowlist, plugin entry shape, no BOM).
+acceptance_criteria:
+  - description: >-
+      Spike result (works in-hook, or fallback needed) is recorded as a decision with evidence (logs
+      or captured API output)
+    done: true
+  - description: >-
+      With a fake ctx and a stub Jev client, a jevCode prompt that gets choice X (confidence >=
+      threshold) results in exactly one switchModel call with X; X equal to the current model
+      results in zero calls
+    done: true
+  - description: >-
+      A Jev answer outside the candidate set, below modelMinConfidence, `keep`, null (failure) or a
+      timeout results in zero switchModel calls and a fallback TurnPlan with a reason
+    done: true
+  - description: >-
+      Candidate catalog excludes disabled, deprecated, non-chat and no-tools models, is capped at
+      12, and honours the `models` allowlist (unit tests)
+    done: true
+  - description: >-
+      A prompt for agent build (or any non-jev agent) performs zero Jev calls and zero plan creation
+      but still runs restore (unit test; asserts the stub client was never called)
+    done: true
+  - description: >-
+      TurnPlan is stored per sessionID with turnKey; a second prompt in the same session replaces it
+      (unit test)
+    done: true
+  - description: >-
+      End-to-end on opencode 2.2.5 with a mock provider: after a jevCode prompt the session's model
+      equals Jev's choice and the model request used it (captured evidence in the ticket notes)
+    done: true
