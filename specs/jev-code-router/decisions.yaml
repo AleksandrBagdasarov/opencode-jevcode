@@ -2074,3 +2074,13 @@
   invariant: Do not tell users to put the key in opencode.jsonc. Process env still wins over the files.
   files:
     - README.md
+- datetime: 2026-11-03 17:20
+  title: Bump package version to 0.1.2
+  tags:
+    - publish
+    - package
+  change: package.json version 0.1.1 -> 0.1.2.
+  reason: npm publish rejected 0.1.1 because that version is already published.
+  invariant: Do not republish an existing npm version. Next publish must be a version not yet on the registry.
+  files:
+    - package.json
