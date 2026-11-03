@@ -3,6 +3,7 @@
  * Setup NEVER throws: option parsing, logging and every module are guarded.
  */
 import { resolveOptions } from "./config.ts";
+import { hostEnv } from "./host-env.ts";
 import { createLogger, type Logger } from "./log.ts";
 import { wireModules, type Cleanup, type Module } from "./modules.ts";
 
@@ -19,9 +20,21 @@ export async function setupPlugin<Ctx extends { readonly options?: unknown }>(
 ): Promise<Cleanup> {
   let log: Logger | undefined;
   try {
-    const options = resolveOptions(ctx?.options, extra.env ?? process.env);
+    // Callers that pass `extra.env` (tests) are not mixed with the machine config.
+    const env = extra.env ?? hostEnv();
+    const options = resolveOptions(ctx?.options, env);
     log = createLogger({ debug: options.debug, secrets: [options.apiKey], sink: extra.sink });
     log.debug(`setup: provider=${options.provider} key=${options.apiKeySource}`);
+    if (
+      !extra.env &&
+      options.apiKey &&
+      !process.env.TYPESAFE_API_KEY?.trim() &&
+      !process.env.OPENROUTER_API_KEY?.trim()
+    ) {
+      log.info(
+        `Jev key was not in the server process environment; using ${options.apiKeySource} from the OpenCode config directory`,
+      );
+    }
     const wired = await wireModules(modules, ctx, { options, log });
     return wired.cleanup;
   } catch (err) {

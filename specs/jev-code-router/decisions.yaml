@@ -2008,3 +2008,69 @@
     shell, and must not recommend committing keys in opencode.jsonc.
   files:
     - README.md
+- datetime: 2026-11-03 17:11
+  title: Read Jev keys from OpenCode service config when the process env is empty
+  tags:
+    - config
+    - resilience
+  change: >-
+    Added src/host-env.ts. It copies process.env and fills missing TYPESAFE_API_KEY / OPENROUTER_API_KEY from
+    ~/.config/opencode/service.json env, then from ~/.config/opencode/.env. Process env wins. Never throws and never
+    logs values.
+  reason: >-
+    OpenCode 2.2.5 stores `opencode service set env` in service.json but does not inject it into the server process that
+    loads the plugin. A shell child of that process also has no key, so resolveOptions(process.env) always saw
+    apiKeySource=none.
+  invariant: >-
+    resolveOptions still never throws and never logs apiKey. Explicit extra.env passed to setupPlugin is not mixed with
+    the machine config. Only the two Jev key names are read from those files.
+  files:
+    - src/host-env.ts
+- datetime: 2026-11-03 17:11
+  title: setupPlugin reads host env when no explicit env is passed
+  tags:
+    - config
+  change: >-
+    setupPlugin now calls hostEnv() instead of process.env when extra.env is omitted, and logs one info line when the
+    Jev key came from the OpenCode config directory rather than the server process.
+  reason: The plugin must see keys stored by `opencode service set env` even when the server process environment is empty.
+  invariant: >-
+    An explicit extra.env is used as-is and is not merged with service.json. The info line names the source, never the
+    key.
+  files:
+    - src/setup.ts
+- datetime: 2026-11-03 17:11
+  title: setupPlugin falls back to hostEnv for the Jev key
+  tags:
+    - config
+  change: >-
+    Replaced extra.env ?? process.env with extra.env ?? hostEnv(), and added an info log when the key is absent from the
+    server process but present after hostEnv().
+  reason: The import alone did not change lookup. The fallback has to run before resolveOptions.
+  invariant: Explicit extra.env is not merged with service.json. The log line does not include the key.
+  files:
+    - src/setup.ts
+- datetime: 2026-11-03 17:11
+  title: Tests for host env key fallback
+  tags:
+    - config
+    - test
+  change: >-
+    Added tests/host-env.test.ts for service.json and .env parsing, process-env precedence, and a missing config
+    directory.
+  reason: The fallback must not throw and must not let a file override a process key.
+  invariant: Tests use temp directories and fake keys, never the real service.json.
+  files:
+    - tests/host-env.test.ts
+- datetime: 2026-11-03 17:12
+  title: Document service.json key fallback
+  tags:
+    - docs
+    - config
+  change: >-
+    README now says OpenCode 2.2.5 does not inject service env into the server process, and that the plugin reads the
+    two Jev key names from service.json and then .env when process.env lacks them.
+  reason: The documented `service set env` command alone does not make the key visible to the plugin on 2.2.5.
+  invariant: Do not tell users to put the key in opencode.jsonc. Process env still wins over the files.
+  files:
+    - README.md

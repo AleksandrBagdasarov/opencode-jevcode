@@ -134,6 +134,11 @@ opencode service set env TYPESAFE_API_KEY <your-api-key>
 Same form for OpenRouter: `opencode service set env OPENROUTER_API_KEY <your-api-key>`. Do not put the key in
 `opencode.jsonc`.
 
+OpenCode 2.2.5 writes that value to `~/.config/opencode/service.json` but does **not** put it on the server
+process. The plugin therefore also reads `TYPESAFE_API_KEY` / `OPENROUTER_API_KEY` from that file, and then
+from `~/.config/opencode/.env`, when they are missing from `process.env`. A variable already set on the process
+wins, so `opencode --standalone` still uses the shell. The key is never logged.
+
 ## Options
 
 All options are optional. Invalid values never throw: a wrong type falls back to the default and numbers are

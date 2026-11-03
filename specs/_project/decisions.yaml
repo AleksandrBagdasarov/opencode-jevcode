@@ -1,0 +1,11 @@
+- datetime: 2026-11-03 17:12
+  title: Load local jevCode plugin so the key fallback is active
+  tags:
+    - config
+  change: Global OpenCode plugins entry opencode-jevcode now points at C:/Users/sasha/Documents/projects/jevCode.
+  reason: >-
+    The installed npm package still reads only process.env, which does not contain TYPESAFE_API_KEY on OpenCode 2.2.5.
+    The local checkout reads service.json.
+  invariant: Do not put the API key in opencode.jsonc. Restore the npm package name after the fallback is published.
+  files:
+    - C:/Users/sasha/.config/opencode/opencode.jsonc
