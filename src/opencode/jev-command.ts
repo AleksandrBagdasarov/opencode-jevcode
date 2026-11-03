@@ -1,7 +1,8 @@
 /**
  * `/jev <question>` - debug command. Sends one yes/no question straight to Jev and prints `true` or `false`
- * (a `noul` answer of 0.5 or more is `true`). No model turn is started: the answer is posted as a synthetic
- * session message. Without a Jev key the answer is the fixed error text below.
+ * (a `noul` answer of 0.5 or more is `true`). The answer and probability are posted as synthetic session
+ * input so OpenCode delivers it into the visible session transcript. Without a Jev key the answer is the
+ * fixed error text below.
  * The command never throws and works in every agent (it does not touch routing state).
  */
 import type { Module } from "../modules.ts";
@@ -32,7 +33,11 @@ export async function answerJevQuestion(
       { [QUESTION]: noulQuestion("Is the statement or question in the state's `question` field true? Answer with the probability that it is yes/true.") },
     );
     const answer = answers?.[QUESTION];
-    if (answer?.kind === "noul") return answer.probability >= 0.5 ? "true" : "false";
+    if (answer?.kind === "noul") {
+      const probability = Math.min(1, Math.max(0, answer.probability));
+      const verdict = probability >= 0.5 ? "true" : "false";
+      return `${verdict} (${probability.toFixed(3)})`;
+    }
     return FAILED_MESSAGE;
   } catch {
     return FAILED_MESSAGE;
@@ -71,7 +76,9 @@ export const jevCommandModule: Module<JevCommandCtx> = {
           const reply = await answerJevQuestion(client, !!options.apiKey, typeof prompt?.text === "string" ? prompt.text : "");
           log.info(`/jev: ${reply}`);
           try {
-            await ctx.session.synthetic({ sessionID, text: reply, resume: false });
+            // `resume:false` leaves this in the inbox, invisible in the session transcript. Resume so
+            // OpenCode delivers the synthetic reply into the active session and the TUI can show it.
+            await ctx.session.synthetic({ sessionID, text: reply, resume: true });
           } catch (err) {
             log.warn("/jev: could not post the answer:", err);
           }

@@ -13,6 +13,7 @@ import {
   MODEL_QUESTION,
   modelsFrom,
   sameModelId,
+  shouldSwitchModel,
   type ModelCandidate,
 } from "../../src/router/model-router.ts";
 import { fallbackPlan } from "../../src/router/plan.ts";
@@ -171,6 +172,37 @@ describe("model question and decision mapping", () => {
     const d = decideModel(answer, cands, 0.5);
     expect(d.kind).toBe("keep");
     expect(d.kind === "keep" && d.reason).toContain(reason);
+  });
+
+  test("allowlist with #variant attaches variant to candidate and describes thinking effort", () => {
+    const list = [info("opencode", "claude-sonnet-5-5", { name: "Claude Sonnet 5.5" })];
+    const out = buildCandidates(list, {
+      allowlist: [{ model: "opencode/claude-sonnet-5-5#high", profile: "large-context" }],
+    });
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({
+      key: "opencode/claude-sonnet-5-5#high",
+      providerID: "opencode",
+      id: "claude-sonnet-5-5",
+      variant: "high",
+      profile: "large-context",
+    });
+    expect(describeCandidate(out[0]!)).toContain("Claude Sonnet 5.5 (#high thinking effort)");
+  });
+
+  test("shouldSwitchModel logic for variants and model ids", () => {
+    const base = { providerID: "opencode", id: "gemini" };
+    // Same provider and id without variant target does not switch over default variant
+    expect(shouldSwitchModel(base, { ...base, variant: "default" })).toBe(false);
+    // Explicit variant target differing from current variant switches
+    expect(shouldSwitchModel({ ...base, variant: "high" }, { ...base, variant: "default" })).toBe(true);
+    expect(shouldSwitchModel({ ...base, variant: "high" }, { ...base, variant: "low" })).toBe(true);
+    // Same variant does not switch
+    expect(shouldSwitchModel({ ...base, variant: "high" }, { ...base, variant: "high" })).toBe(false);
+    // Different model id switches
+    expect(shouldSwitchModel({ providerID: "opencode", id: "claude", variant: "high" }, { ...base, variant: "high" })).toBe(true);
+    // Unset current model always switches
+    expect(shouldSwitchModel(base, undefined)).toBe(true);
   });
 
   test("sameModelId ignores the variant", () => {

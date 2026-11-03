@@ -103,12 +103,12 @@ The list must contain an agent with id `jevCode` and `mode: primary`.
 
 ## `/jev` debug command
 
-`/jev <yes/no question>` asks Jev one question and posts the answer in the session. It does not start a model turn and it does not change routing. It works in any agent.
+`/jev <yes/no question>` asks Jev one question and delivers the answer into the visible session transcript. It works in any agent.
 
-- The answer is `true` or `false`. Jev returns a probability; `0.5` or more is `true`.
+- The answer is `true (0.873)` or `false (0.127)`. Jev returns a probability; `0.5` or more is `true`.
 - With no `TYPESAFE_API_KEY` and no `OPENROUTER_API_KEY` (not in the process, `service.json`, or `~/.config/opencode/.env`) the answer is exactly `Provide TYPESAFE_API_KEY or OPENROUTER_API_KEY`. Jev is not called.
 - `/jev` with no question posts `Usage: /jev <yes/no question>`.
-- The answer is a synthetic inbox message (`resume: false`), so it is queued and not sent to a model. It is also logged as `[jevcode] /jev: true` (info level; the question text is not logged).
+- The result is delivered as synthetic session input so it appears in the TUI. OpenCode may run the normal session turn after delivery. The result is also logged as `[jevcode] /jev: true (0.873)` (info level; the question text is not logged).
 
 ## Jev providers and keys
 
@@ -161,7 +161,7 @@ clamped to their range.
 | `endpoint` | string | provider default | Override the HTTP endpoint of the `typesafe` / `openrouter` transport (self-hosted or mock). |
 | `jevModel` | string | `jev-latest` (typesafe), `typesafe/jev-1.13` (openrouter) | Jev model name sent to the HTTP API. |
 | `timeoutMs` | integer > 0 | `4000` | One deadline for a whole Jev call (including the one retry on a 5xx/network error). On timeout the turn runs on the fallback plan. |
-| `models` | `Array<"provider/id" \| { model: "provider/id", profile? }>` | `[]` | Allowlist of coding models Jev may choose from. `profile` is one of `fast`, `balanced`, `reasoning`, `large-context`. Empty = automatic candidates (max 12). See [below](#recommended-a-models-allowlist). |
+| `models` | `Array<"provider/id[#variant]" \| { model: "provider/id[#variant]", variant?, profile? }>` | `[]` | Allowlist of coding models Jev may choose from. `profile` is one of `fast`, `balanced`, `reasoning`, `large-context`. Can include `#variant` for thinking effort levels (e.g. `#high`, `#medium`). Empty = automatic candidates (max 12). See [below](#recommended-a-models-allowlist). |
 | `fallbackModel` | `"provider/id"` | none | **Accepted but not used** in v0.1 (Jev failure keeps the current model). Reserved; you can omit it. |
 | `modelMinConfidence` | 0..1 | `0.5` | Below this confidence the model choice is ignored and the current model is kept. |
 | `maxSkills` | integer 0..50 | `3` | Max skills added per prompt. `0` disables skill routing. |
@@ -189,10 +189,12 @@ Full example:
         "provider": "typesafe",              // key from TYPESAFE_API_KEY
         "timeoutMs": 4000,
         "models": [
-          { "model": "anthropic/claude-haiku-4-5", "profile": "fast" },
-          { "model": "anthropic/claude-sonnet-4-5", "profile": "balanced" },
-          { "model": "openai/gpt-5", "profile": "reasoning" }
+          { "model": "opencode/gpt-5.4-nano", "profile": "fast" },
+          { "model": "opencode/gemini-3.5-flash-lite", "profile": "balanced" },
+          { "model": "opencode/gemini-3.8-flash#medium", "profile": "reasoning" },
+          { "model": "opencode/claude-sonnet-5-5#high", "profile": "large-context" }
         ],
+        "modelMinConfidence": 0.35,
         "maxSkills": 3,
         "skillThreshold": 0.6,
         "toolThreshold": 0.4,
@@ -200,7 +202,8 @@ Full example:
         "toolGroups": { "Database": ["*postgres*"], "Tickets": ["jira_*"] },
         "keepRecentMessages": 6,
         "pruneMinTokens": 12000,
-        "agentFileFallback": true
+        "agentFileFallback": true,
+        "debug": false
       }
     }
   ]
@@ -223,6 +226,7 @@ Always set `models`.
   window (context >= 400k = `large-context`; output price <= $2/M = `fast`; >= $15/M = `reasoning`; else
   `balanced`).
 - Models can be written as `"provider/id"` strings or as `{ "model": "provider/id", "profile": "fast" }`.
+- **Thinking effort / variants:** You can specify variants with `#variant` or `"variant"` (e.g. `"opencode/claude-sonnet-5-5#high"` or `{ "model": "opencode/gemini-3.8-flash", "variant": "medium" }`). The plugin passes `{ providerID, id, variant }` to `switchModel` so models run with the requested reasoning/thinking effort level.
 
 ## Tool groups
 

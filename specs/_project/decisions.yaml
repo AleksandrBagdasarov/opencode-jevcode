@@ -9,3 +9,57 @@
   invariant: Do not put the API key in opencode.jsonc. Restore the npm package name after the fallback is published.
   files:
     - C:/Users/sasha/.config/opencode/opencode.jsonc
+- datetime: 2026-11-03 20:35
+  title: Temporary isolated host probe for visible /jev reply
+  tags:
+    - tests
+    - integration
+    - security
+  change: >-
+    Will create a temporary XDG OpenCode config with the local checkout plugin and a copy of the user's config-dir .env
+    to exercise resume:true on OpenCode 2.2.5; the copied key and server logs will be deleted after verification.
+  reason: >-
+    Unit tests verify args but cannot tell whether synthetic resume:true reaches the TUI transcript; user reported
+    replies invisible.
+  invariant: >-
+    Never print or commit secret contents; isolated localhost server and temporary config only; delete all copied
+    env/config files and stop the server afterward.
+  files:
+    - C:/Users/sasha/AppData/Local/Temp/opencode/jev-visible-probe
+- datetime: 2026-11-03 20:36
+  title: Remove isolated /jev transcript probe artifacts
+  tags:
+    - tests
+    - integration
+    - security
+  change: >-
+    Stopped the temporary OpenCode server and deleted its isolated config, copied .env, scripts, and logs. The live
+    probe showed a transcript text result of `false (0.020)` and no pending inbox item after delivery.
+  reason: Probe artifacts contained a copied secret file and were only needed for verification.
+  invariant: No temporary key copies or test server processes remain.
+  files:
+    - C:/Users/sasha/AppData/Local/Temp/opencode/jev-visible-probe
+- datetime: 2026-11-03 20:38
+  title: Temporary /jev probe in the user's active session
+  tags:
+    - tests
+    - integration
+  change: >-
+    Will use OpenCode's authenticated CLI API to invoke /jev in the current project's latest JevCode session and verify
+    the transcript message, without exposing credentials.
+  reason: >-
+    User has switched the live config to the local plugin and asks about missing TUI output; a check against the active
+    session best verifies the actual path.
+  invariant: Do not print auth credentials; ask one short harmless yes/no question; do not edit the user's configuration.
+  files:
+    - temporary process only
+- datetime: 2026-11-03 20:39
+  title: Remove unused live /jev verification script
+  tags:
+    - tests
+    - integration
+  change: Deleted the temporary verification script after the user confirmed `/jev` displayed `true (0.990)` in the TUI.
+  reason: The user's live result provided the needed verification; the unused script is no longer needed.
+  invariant: No temporary script remains and no credentials were printed.
+  files:
+    - C:/Users/sasha/AppData/Local/Temp/opencode/verify-live-jev.js

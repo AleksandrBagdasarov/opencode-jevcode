@@ -24,6 +24,7 @@ import {
   createModelRouter,
   MODEL_CONTRIBUTOR,
   sameModelId,
+  shouldSwitchModel,
 } from "../router/model-router.ts";
 import { createSkillRouter } from "../router/skill-router.ts";
 import { createToolRouter } from "../router/tool-router.ts";
@@ -33,7 +34,9 @@ import {
   planRemember,
   reconcileOnJevPrompt,
   restoreIfNeeded,
+  sameModel,
   toModelRef,
+  type ModelRef,
   type PlanCache,
   type RestoreCtx,
   type RestoreMemory,
@@ -69,7 +72,7 @@ export function createPromptHook(deps: PromptHookDeps): (event: PromptEvent) => 
   async function route(event: PromptEvent, sessionID: string, turnKey: string, text: string): Promise<TurnPlan> {
     const plan = fallbackPlan(sessionID, turnKey, "no routing decision", now());
 
-    let current;
+    let current: ModelRef | undefined;
     try {
       current = toModelRef(unwrapSession(await ctx.session.get({ sessionID }))?.model);
     } catch (err) {
@@ -138,14 +141,25 @@ export function createPromptHook(deps: PromptHookDeps): (event: PromptEvent) => 
     }
 
     // 4. switch the model only when it differs; remember the way back
-    if (plan.model && !sameModelId(plan.model, current)) {
-      const target = { providerID: plan.model.providerID, id: plan.model.id };
+    if (plan.model && shouldSwitchModel(plan.model, current)) {
+      const target: { providerID: string; id: string; variant?: string } = {
+        providerID: plan.model.providerID,
+        id: plan.model.id,
+      };
+      if (plan.model.variant) target.variant = plan.model.variant;
       try {
         await ctx.session.switchModel({ sessionID, model: target });
-        log.info(`model ${current.providerID}/${current.id} -> ${target.providerID}/${target.id} (confidence ${plan.model.confidence.toFixed(2)})`);
-        await remember(sessionID, current, target);
+        const fromStr = current?.variant
+          ? `${current.providerID}/${current.id}#${current.variant}`
+          : current
+            ? `${current.providerID}/${current.id}`
+            : "unset";
+        const toStr = target.variant ? `${target.providerID}/${target.id}#${target.variant}` : `${target.providerID}/${target.id}`;
+        log.info(`model ${fromStr} -> ${toStr} (confidence ${plan.model.confidence.toFixed(2)})`);
+        if (current) await remember(sessionID, current, target);
       } catch (err) {
-        log.warn(`could not switch to ${target.providerID}/${target.id}; keeping the current model:`, err);
+        const toStr = target.variant ? `${target.providerID}/${target.id}#${target.variant}` : `${target.providerID}/${target.id}`;
+        log.warn(`could not switch to ${toStr}; keeping the current model:`, err);
         plan.model = undefined;
         reasons.push("model switch failed");
         const i = decidedBy.indexOf(MODEL_CONTRIBUTOR);
@@ -164,11 +178,15 @@ export function createPromptHook(deps: PromptHookDeps): (event: PromptEvent) => 
   }
 
   /** `applied` is the model the session reports after the switch (it carries the host's variant). */
-  async function remember(sessionID: string, previous: NonNullable<ReturnType<typeof toModelRef>>, target: { providerID: string; id: string }) {
+  async function remember(
+    sessionID: string,
+    previous: NonNullable<ReturnType<typeof toModelRef>>,
+    target: { providerID: string; id: string; variant?: string },
+  ) {
     let applied: NonNullable<ReturnType<typeof toModelRef>> = target;
     try {
       const after = toModelRef(unwrapSession(await ctx.session.get({ sessionID }))?.model);
-      if (after && sameModelId(after, target)) applied = after;
+      if (after && sameModelId(after, target) && (target.variant === undefined || after.variant === target.variant)) applied = after;
     } catch {
       // the chosen model is a good enough record
     }

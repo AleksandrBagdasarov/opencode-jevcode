@@ -2,7 +2,7 @@
  * The jevCode agent definition (story R1, design D2). Single source of truth for the system prompt:
  * agents/jevCode.md is rendered from the same constants (a test pins the equality).
  */
-import type { Resolved } from "../config.ts";
+import { parseModelKey, type ParsedModelKey, type Resolved } from "../config.ts";
 
 export const JEV_AGENT_ID = "jevCode";
 
@@ -16,28 +16,9 @@ export const JEV_SYSTEM_PROMPT =
   "Do not assume that tools or skills unavailable in the current request are available.";
 
 /** Model reference as stored on an agent (`provider/id[#variant]` in options). */
-export interface AgentModelRef {
-  providerID: string;
-  id: string;
-  variant?: string;
-}
+export type AgentModelRef = ParsedModelKey;
 
-/** Parse `provider/id[#variant]`. The id may itself contain `/` (only the first one splits). */
-export function parseModelKey(key: string | undefined): AgentModelRef | undefined {
-  if (typeof key !== "string") return undefined;
-  const slash = key.indexOf("/");
-  if (slash <= 0) return undefined;
-  const providerID = key.slice(0, slash);
-  let id = key.slice(slash + 1);
-  let variant: string | undefined;
-  const hash = id.lastIndexOf("#");
-  if (hash >= 0) {
-    variant = id.slice(hash + 1) || undefined;
-    id = id.slice(0, hash);
-  }
-  if (!id) return undefined;
-  return variant ? { providerID, id, variant } : { providerID, id };
-}
+export { parseModelKey };
 
 /** Structural subset of the host's mutable `Agent.Info` that this plugin touches. */
 export interface AgentDraft {

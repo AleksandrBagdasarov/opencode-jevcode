@@ -25,9 +25,9 @@ function client(answers: Answers | null, transport = "typesafe") {
 
 describe("answerJevQuestion", () => {
   test("probability >= 0.5 is true, below is false", async () => {
-    expect(await answerJevQuestion(client({ q: { kind: "noul", probability: 0.9 } }), true, "is the sky blue?")).toBe("true");
-    expect(await answerJevQuestion(client({ q: { kind: "noul", probability: 0.5 } }), true, "x")).toBe("true");
-    expect(await answerJevQuestion(client({ q: { kind: "noul", probability: 0.1 } }), true, "x")).toBe("false");
+    expect(await answerJevQuestion(client({ q: { kind: "noul", probability: 0.9 } }), true, "is the sky blue?")).toBe("true (0.900)");
+    expect(await answerJevQuestion(client({ q: { kind: "noul", probability: 0.5 } }), true, "x")).toBe("true (0.500)");
+    expect(await answerJevQuestion(client({ q: { kind: "noul", probability: 0.1 } }), true, "x")).toBe("false (0.100)");
   });
 
   test("sends the question in the state and one noul question", async () => {
@@ -75,6 +75,6 @@ describe("jevCommandModule", () => {
     await jevCommandModule.init(ctx, { options, log: createLogger({ sink: () => {} }), track: (x: any) => x });
     expect(def.name).toBe(JEV_COMMAND_NAME);
     await def.execute({ sessionID: "ses_1", prompt: { text: "anything" }, delivery: "queue" });
-    expect(posted).toEqual([{ sessionID: "ses_1", text: NO_KEY_MESSAGE, resume: false }]);
+    expect(posted).toEqual([{ sessionID: "ses_1", text: NO_KEY_MESSAGE, resume: true }]);
   });
 });

@@ -5,7 +5,7 @@
  * `choice` question over the candidate keys plus `keep`, and code maps the answer back to a validated
  * candidate. Anything else (unknown key, low confidence, `keep`, no answer) keeps the current model.
  */
-import type { AllowedModel, ModelProfile, Resolved } from "../config.ts";
+import { parseModelKey, type AllowedModel, type ModelProfile, type Resolved } from "../config.ts";
 import { choiceQuestion } from "../jev/questions.ts";
 import { pickChoice } from "../jev/response.ts";
 import type { Answer, Answers, Question } from "../jev/types.ts";
@@ -27,10 +27,11 @@ export const CATALOG_TTL_MS = 30_000;
 export const PROMPT_STATE_CHARS = 3_000;
 
 export interface ModelCandidate {
-  /** `provider/id` */
+  /** `provider/id[#variant]` */
   key: string;
   providerID: string;
   id: string;
+  variant?: string;
   name: string;
   /** Context window in tokens (0 = unknown). */
   contextWindow: number;
@@ -129,8 +130,20 @@ export function buildCandidates(list: unknown, options: CandidateOptions = {}): 
   if (allow.length > 0) {
     ordered = [];
     for (const entry of allow) {
-      const c = valid.get(entry.model);
-      if (c) ordered.push(entry.profile ? { ...c, profile: entry.profile } : c);
+      const parsed = parseModelKey(entry.model);
+      if (!parsed) continue;
+      const baseKey = `${parsed.providerID}/${parsed.id}`;
+      const c = valid.get(baseKey);
+      if (!c) continue;
+      const variant = entry.variant ?? parsed.variant;
+      const candidateKey = variant ? `${baseKey}#${variant}` : baseKey;
+      const candidate: ModelCandidate = {
+        ...c,
+        key: candidateKey,
+        ...(variant ? { variant } : {}),
+        profile: entry.profile ?? c.profile,
+      };
+      ordered.push(candidate);
     }
   } else {
     const byProfile = new Map<ModelProfile, ModelCandidate[]>(PROFILE_ORDER.map((p) => [p, []]));
@@ -148,7 +161,10 @@ export function buildCandidates(list: unknown, options: CandidateOptions = {}): 
   }
 
   if (ordered.length <= max) return ordered;
-  const pinned = options.pin ? ordered.find((c) => c.key === options.pin) : undefined;
+  const parsedPin = options.pin ? parseModelKey(options.pin) : undefined;
+  const pinned = options.pin
+    ? ordered.find((c) => c.key === options.pin || (parsedPin && c.providerID === parsedPin.providerID && c.id === parsedPin.id && (!parsedPin.variant || c.variant === parsedPin.variant)))
+    : undefined;
   const head = ordered.filter((c) => c !== pinned).slice(0, pinned ? max - 1 : max);
   return pinned ? [...head, pinned] : head;
 }
@@ -160,7 +176,8 @@ const formatPrice = (n: number): string => `$${+n.toFixed(2)}`;
 
 /** One-line description Jev reads for each option. */
 export function describeCandidate(c: ModelCandidate): string {
-  const parts = [`${c.profile} model`, c.name];
+  const nameWithVariant = c.variant ? `${c.name} (#${c.variant} thinking effort)` : c.name;
+  const parts = [`${c.profile} model`, nameWithVariant];
   if (c.contextWindow > 0) parts.push(`${formatContext(c.contextWindow)} context`);
   if (c.inputPrice !== undefined && c.outputPrice !== undefined) {
     parts.push(`${formatPrice(c.inputPrice)} in / ${formatPrice(c.outputPrice)} out per M tokens`);
@@ -174,11 +191,13 @@ const INSTRUCTIONS =
   "debugging, design and multi-file changes; a large-context model when the task needs to read a lot of code. " +
   `Answer "${KEEP}" to leave the current model unchanged when unsure.`;
 
-/** The `choice` question: candidate keys + `keep`. */
-export function buildModelQuestion(candidates: readonly ModelCandidate[]): Question {
+/** The `choice` question: candidate keys + optional `keep` (omitted when no model is active yet). */
+export function buildModelQuestion(candidates: readonly ModelCandidate[], hasCurrent = true): Question {
   const options: Record<string, string> = {};
   for (const c of candidates) options[c.key] = describeCandidate(c);
-  options[KEEP] = "Keep the current session model (no switch).";
+  if (hasCurrent) {
+    options[KEEP] = "Keep the current session model (no switch).";
+  }
   return choiceQuestion(INSTRUCTIONS, options);
 }
 
@@ -209,9 +228,25 @@ function explainRejection(answer: Answer | undefined, candidates: readonly Model
   return `model confidence ${typeof answer.confidence === "number" ? answer.confidence.toFixed(2) : "n/a"} below the minimum`;
 }
 
-/** Provider + id only: a session model carries a `variant` that candidates do not. */
+/** Provider + id only: compares base model identity ignoring variants. */
 export const sameModelId = (a: Pick<ModelRef, "providerID" | "id"> | undefined, b: Pick<ModelRef, "providerID" | "id"> | undefined): boolean =>
   !!a && !!b && a.providerID === b.providerID && a.id === b.id;
+
+/**
+ * Whether the target model differs from the current model.
+ * If target specifies a variant, it must match current's variant; if target has no variant,
+ * providerID and id equality is sufficient.
+ */
+export function shouldSwitchModel(
+  target: { providerID: string; id: string; variant?: string } | undefined,
+  current: ModelRef | undefined,
+): boolean {
+  if (!target) return false;
+  if (!current) return true;
+  if (target.providerID !== current.providerID || target.id !== current.id) return true;
+  if (target.variant !== undefined && target.variant !== (current.variant ?? "")) return true;
+  return false;
+}
 
 export interface ModelRouterDeps {
   options: Pick<Resolved, "models" | "modelMinConfidence" | "timeoutMs">;
@@ -252,19 +287,30 @@ export function createModelRouter(deps: ModelRouterDeps): StageAContributor {
         deps.log.warn("model router: could not list models:", err);
         return { skip: "model catalog unavailable" };
       }
-      const currentKey = `${input.current.providerID}/${input.current.id}`;
+      const currentKey = input.current
+        ? input.current.variant
+          ? `${input.current.providerID}/${input.current.id}#${input.current.variant}`
+          : `${input.current.providerID}/${input.current.id}`
+        : undefined;
       const candidates = buildCandidates(list, { allowlist: deps.options.models, pin: currentKey });
       if (candidates.length === 0) return { skip: "no candidate models" };
-      if (candidates.length === 1 && candidates[0]!.key === currentKey) return { skip: "current model is the only candidate" };
+      if (currentKey && candidates.length === 1 && candidates[0]!.key === currentKey) {
+        return { skip: "current model is the only candidate" };
+      }
 
       return {
-        questions: { [MODEL_QUESTION]: buildModelQuestion(candidates) },
+        questions: { [MODEL_QUESTION]: buildModelQuestion(candidates, !!input.current) },
         apply(answers: Answers | null, plan: TurnPlan): StageAOutcome {
           if (!answers) return { decided: false, reason: "Jev unavailable" };
           const decision = decideModel(answers[MODEL_QUESTION], candidates, deps.options.modelMinConfidence);
           if (decision.kind === "keep") return { decided: false, reason: decision.reason };
           const { candidate, confidence } = decision;
-          plan.model = { providerID: candidate.providerID, id: candidate.id, confidence };
+          plan.model = {
+            providerID: candidate.providerID,
+            id: candidate.id,
+            ...(candidate.variant ? { variant: candidate.variant } : {}),
+            confidence,
+          };
           return { decided: true };
         },
       };
@@ -274,8 +320,14 @@ export function createModelRouter(deps: ModelRouterDeps): StageAContributor {
 
 /** Compact state for the batched Jev request (prompt text is cut; no secrets, no transcript). */
 export function buildStageAState(input: Pick<StageAInput, "text" | "current">): { request: string; currentModel: string } {
+  const current = input.current;
+  const currentModel = current
+    ? current.variant && current.variant !== "default"
+      ? `${current.providerID}/${current.id}#${current.variant}`
+      : `${current.providerID}/${current.id}`
+    : "none";
   return {
     request: input.text.length > PROMPT_STATE_CHARS ? `${input.text.slice(0, PROMPT_STATE_CHARS)}…` : input.text,
-    currentModel: `${input.current.providerID}/${input.current.id}`,
+    currentModel,
   };
 }

@@ -7,8 +7,9 @@ export type ProviderChoice = "auto" | "opencode" | "typesafe" | "openrouter" | "
 export type ModelProfile = "fast" | "balanced" | "reasoning" | "large-context";
 
 export interface AllowedModel {
-  /** `provider/id` */
+  /** `provider/id[#variant]` */
   model: string;
+  variant?: string;
   profile?: ModelProfile;
 }
 
@@ -110,11 +111,32 @@ function groupMap(v: unknown): Record<string, string[]> {
   return out;
 }
 
-/** `provider/id` with both parts non-empty. */
+export interface ParsedModelKey {
+  providerID: string;
+  id: string;
+  variant?: string;
+}
+
+/** Parse `provider/id[#variant]`. The id may itself contain `/` (only the first one splits). */
+export function parseModelKey(key: string | undefined): ParsedModelKey | undefined {
+  if (typeof key !== "string") return undefined;
+  const slash = key.indexOf("/");
+  if (slash <= 0) return undefined;
+  const providerID = key.slice(0, slash);
+  let id = key.slice(slash + 1);
+  let variant: string | undefined;
+  const hash = id.lastIndexOf("#");
+  if (hash >= 0) {
+    variant = id.slice(hash + 1) || undefined;
+    id = id.slice(0, hash);
+  }
+  if (!id) return undefined;
+  return variant ? { providerID, id, variant } : { providerID, id };
+}
+
+/** `provider/id[#variant]` with provider and id non-empty. */
 export function isModelKey(v: unknown): v is string {
-  if (typeof v !== "string") return false;
-  const i = v.indexOf("/");
-  return i > 0 && i < v.length - 1 && v === v.trim();
+  return typeof v === "string" && v === v.trim() && parseModelKey(v) !== undefined;
 }
 
 function modelKey(v: unknown): string | undefined {
@@ -127,14 +149,24 @@ function models(v: unknown): AllowedModel[] {
   const out: AllowedModel[] = [];
   const seen = new Set<string>();
   for (const item of v) {
-    // Accept the bare "provider/id" shorthand as well as { model, profile? }.
+    // Accept the bare "provider/id[#variant]" shorthand as well as { model, variant?, profile? }.
     const raw = typeof item === "string" ? item : item && typeof item === "object" ? (item as { model?: unknown }).model : undefined;
     const key = modelKey(raw);
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
-    const p = typeof item === "object" && item ? (item as { profile?: unknown }).profile : undefined;
+    if (!key) continue;
+    const parsed = parseModelKey(key);
+    if (!parsed) continue;
+    const itemObj = typeof item === "object" && item ? (item as Record<string, unknown>) : undefined;
+    const explicitVariant = str(itemObj?.variant);
+    const variant = explicitVariant ?? parsed.variant;
+    const canonicalKey = variant ? `${parsed.providerID}/${parsed.id}#${variant}` : `${parsed.providerID}/${parsed.id}`;
+    if (seen.has(canonicalKey)) continue;
+    seen.add(canonicalKey);
+    const p = itemObj?.profile;
     const profile = PROFILES.find((x) => x === p);
-    out.push(profile ? { model: key, profile } : { model: key });
+    const entry: AllowedModel = { model: canonicalKey };
+    if (variant) entry.variant = variant;
+    if (profile) entry.profile = profile;
+    out.push(entry);
   }
   return out;
 }

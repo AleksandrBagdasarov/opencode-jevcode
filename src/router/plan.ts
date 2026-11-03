@@ -13,7 +13,7 @@ export interface TurnPlan {
   source: "jev" | "fallback";
   fallbackReason?: string;
   /** Absent = keep the current model. */
-  model?: { providerID: string; id: string; confidence: number };
+  model?: { providerID: string; id: string; variant?: string; confidence: number };
   /** Validated skill ids (filled by the skill router). */
   skills: string[];
   tools: { groups: string[]; excluded: string[] };
@@ -64,8 +64,8 @@ export interface StageAInput {
   turnKey: string;
   /** User prompt text. */
   text: string;
-  /** Session model before routing; always known here (the hook skips routing otherwise). */
-  current: ModelRef;
+  /** Session model before routing; undefined when the session has no model set yet. */
+  current?: ModelRef;
   /**
    * The mutable prompt of the hook event. Skill routing (ticket 0005) appends `{ id }` entries to
    * `prompt.skills`; the model router only reads it.

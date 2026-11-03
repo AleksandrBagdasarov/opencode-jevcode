@@ -2281,3 +2281,340 @@
   invariant: The documented error string matches NO_KEY_MESSAGE. No secrets in the README.
   files:
     - README.md
+- datetime: 2026-11-03 20:32
+  title: Temporary live probe for /jev
+  tags:
+    - tests
+  change: >-
+    Wrote a throwaway script under the temp directory that calls the running OpenCode API for /jev and prints the inbox
+    texts. It will be deleted after the check.
+  reason: The shell scanner rejected an inline script, and the live /jev command needed a real API call.
+  invariant: The script must not print API keys or server passwords, and it must not be committed.
+  files:
+    - C:/Users/sasha/AppData/Local/Temp/opencode/probe-jev-live.js
+- datetime: 2026-11-03 20:34
+  title: Deliver /jev result into the TUI transcript
+  tags:
+    - integration
+    - routing
+  change: >-
+    Jev noul replies now format as `true (0.873)` or `false (0.127)` with a clamped probability to three decimals. The
+    command submits the reply as synthetic session input with resume:true so OpenCode delivers it into the active
+    transcript instead of leaving it hidden in the inbox.
+  reason: >-
+    Live API testing showed resume:false left replies only in the session inbox; the TUI had no transcript message to
+    display. User requested a visible true/false or probability result.
+  invariant: >-
+    No Jev question text or API key is logged. The command uses the Jev noul answer as the source of verdict and
+    probability. Resume delivery may invoke the normal session model turn.
+  files:
+    - src/opencode/jev-command.ts
+- datetime: 2026-11-03 20:35
+  title: Test visible /jev answer format and resumed delivery
+  tags:
+    - tests
+  change: >-
+    Updated /jev tests to expect verdict plus three-decimal probability and assert the synthetic result uses
+    resume:true.
+  reason: Protect TUI-visible delivery and the probability display against regressions.
+  invariant: Unit tests use fakes only; no credentials/network.
+  files:
+    - tests/router/jev-command.test.ts
+- datetime: 2026-11-03 20:35
+  title: Document visible /jev probability output
+  tags:
+    - docs
+    - README
+  change: >-
+    README now shows verdict with probability, describes synthetic session delivery and notes that OpenCode may run its
+    normal turn afterward.
+  reason: Update the usage docs to match the behavior required for TUI visibility.
+  invariant: No secrets or question text in docs; missing-key message remains exact.
+  files:
+    - README.md
+- datetime: 2026-11-03 20:54
+  title: Add variant to AllowedModel in config.ts
+  tags:
+    - config
+    - model-routing
+  change: 'AllowedModel interface gains optional variant?: string, and JSDoc specifies provider/id[#variant].'
+  reason: Support model variants and thinking effort in the allowlist.
+  invariant: AllowedModel remains serializable and compatible with existing models option arrays.
+  files:
+    - src/config.ts
+- datetime: 2026-11-03 20:55
+  title: 'Parse #variant in allowlists in config.ts'
+  tags:
+    - config
+    - model-routing
+  change: >-
+    Exported parseModelKey and ParsedModelKey from config.ts, updated isModelKey to validate keys including #variant,
+    and updated models() to parse #variant or explicit variant option into canonical provider/id[#variant] and set
+    entry.variant.
+  reason: Allow models option to specify thinking effort variants like opencode/claude-sonnet-5-5#high.
+  invariant: >-
+    resolveOptions never throws; keys without variants remain provider/id; deduplication respects canonical key
+    including variant.
+  files:
+    - src/config.ts
+- datetime: 2026-11-03 20:56
+  title: Re-export parseModelKey from config in agent definition
+  tags:
+    - agent
+    - config
+  change: >-
+    Re-exported parseModelKey and aliased AgentModelRef to ParsedModelKey from config.ts, centralising model key
+    parsing.
+  reason: Share parseModelKey between config, agent definition and model router.
+  invariant: AgentModelRef and parseModelKey exports unchanged in signature and behavior.
+  files:
+    - src/agent/definition.ts
+- datetime: 2026-11-03 20:56
+  title: Add variant to TurnPlan model in plan.ts
+  tags:
+    - routing
+    - model-routing
+  change: 'TurnPlan.model gains optional variant?: string field for thinking effort.'
+  reason: Store routed model variant in TurnPlan.
+  invariant: Existing plan consumers continue to work; fallback plans unaffected.
+  files:
+    - src/router/plan.ts
+- datetime: 2026-11-03 20:56
+  title: Make StageAInput current model optional in plan.ts
+  tags:
+    - routing
+    - model-routing
+  change: StageAInput.current is now optional ModelRef so contributors can prepare when the session model is not yet set.
+  reason: OpenCode 2.2.5 sessions start with an unset model unless --model was given.
+  invariant: Contributors must handle an unset current model gracefully.
+  files:
+    - src/router/plan.ts
+- datetime: 2026-11-03 20:57
+  title: Import parseModelKey in model-router.ts
+  tags:
+    - model-routing
+  change: Imported parseModelKey in model-router.ts.
+  reason: Parse model keys with variants in allowlist and pinning.
+  invariant: Catalog loading and caching behavior unchanged.
+  files:
+    - src/router/model-router.ts
+- datetime: 2026-11-03 20:57
+  title: Add variant to ModelCandidate in model-router.ts
+  tags:
+    - model-routing
+  change: 'ModelCandidate interface gains optional variant?: string field and key JSDoc updated to provider/id[#variant].'
+  reason: Retain thinking effort variants on candidate objects.
+  invariant: Candidate objects remain backward compatible when variant is omitted.
+  files:
+    - src/router/model-router.ts
+- datetime: 2026-11-03 20:58
+  title: Support variants in buildCandidates and describeCandidate
+  tags:
+    - model-routing
+  change: >-
+    buildCandidates parses allowlist entries with parseModelKey to attach variants to candidates, matching base
+    provider/id in host catalog. describeCandidate mentions variant thinking effort. Pinning matches full key or parsed
+    provider/id/variant.
+  reason: 'Allow allowlists with #variant (like claude-sonnet-5-5#high) to be candidate choices.'
+  invariant: Candidates without variants are unaffected; max 12 candidates invariant preserved.
+  files:
+    - src/router/model-router.ts
+- datetime: 2026-11-03 20:58
+  title: Support variants and shouldSwitchModel in model-router.ts
+  tags:
+    - model-routing
+  change: >-
+    Added shouldSwitchModel helper respecting variants, updated buildModelQuestion with optional keep, updated
+    createModelRouter to record variant in plan.model and handle unset current model, and updated buildStageAState to
+    include variant or 'none'.
+  reason: Support routing to models with thinking effort variants and allow routing when session model is initially unset.
+  invariant: Closed-set validation remains strict; candidate keys map back to validated candidates with variants.
+  files:
+    - src/router/model-router.ts
+- datetime: 2026-11-03 21:00
+  title: Import shouldSwitchModel in prompt-hook.ts
+  tags:
+    - routing
+    - model-routing
+  change: Imported shouldSwitchModel in prompt-hook.ts.
+  reason: Check if model or variant changed before calling switchModel.
+  invariant: Hook resilience and fail-open guarantees unchanged.
+  files:
+    - src/opencode/prompt-hook.ts
+- datetime: 2026-11-03 21:00
+  title: Import sameModel in prompt-hook.ts
+  tags:
+    - routing
+    - restore
+  change: Imported sameModel in prompt-hook.ts.
+  reason: Compare models including variants for remember() verification.
+  invariant: Import only.
+  files:
+    - src/opencode/prompt-hook.ts
+- datetime: 2026-11-03 21:00
+  title: Allow prompt-hook routing when session model is initially unset
+  tags:
+    - routing
+    - resilience
+  change: >-
+    prompt-hook route() no longer aborts when session model is unset; it proceeds without a pinned current model so Jev
+    can select the initial model.
+  reason: Allow routing to work on fresh sessions without an explicit --model argument.
+  invariant: Hook remains fail-open; errors are caught and yield fallback plan.
+  files:
+    - src/opencode/prompt-hook.ts
+- datetime: 2026-11-03 21:00
+  title: Pass variant to switchModel and check with shouldSwitchModel
+  tags:
+    - routing
+    - model-routing
+  change: >-
+    Pass target.variant to ctx.session.switchModel when present; use shouldSwitchModel to compare target and current
+    models; verify applied model with sameModel.
+  reason: 'Pass thinking effort variants (e.g. #high, #medium) to the OpenCode host via switchModel.'
+  invariant: switchModel is only called when target differs from current; previous model is remembered only if present.
+  files:
+    - src/opencode/prompt-hook.ts
+- datetime: 2026-11-03 21:02
+  title: 'Omit #default variant suffix in buildStageAState'
+  tags:
+    - model-routing
+  change: 'buildStageAState omits #default variant suffix when sending currentModel to Jev.'
+  reason: Host session models carry variant 'default' by default which is not part of model keys.
+  invariant: Prompt text truncation at 3000 chars preserved.
+  files:
+    - src/router/model-router.ts
+- datetime: 2026-11-03 21:04
+  title: Import ModelRef in prompt-hook.ts
+  tags:
+    - routing
+  change: Imported type ModelRef in prompt-hook.ts.
+  reason: Fix TypeScript compilation in prompt-hook.ts.
+  invariant: Type import only.
+  files:
+    - src/opencode/prompt-hook.ts
+- datetime: 2026-11-03 21:04
+  title: Preserve unreadable session model fallback in prompt-hook.ts
+  tags:
+    - routing
+  change: >-
+    Restored fallback on unreadable session model in prompt-hook route() to preserve Ticket 0004 AC invariant and test
+    expectation.
+  reason: Satisfies existing unit tests and ticket AC.
+  invariant: Unreadable session model yields fallback plan with reason 'session model unreadable'.
+  files:
+    - src/opencode/prompt-hook.ts
+- datetime: 2026-11-03 21:05
+  title: Refine applied model verification in remember()
+  tags:
+    - restore
+    - model-routing
+  change: >-
+    In remember(), applied model verification matches sameModelId and checks target.variant matches after.variant when
+    target specified a variant.
+  reason: Target without explicit variant inherits host's default variant; target with variant requires match.
+  invariant: Host-reported session model variant is preserved in applied model record.
+  files:
+    - src/opencode/prompt-hook.ts
+- datetime: 2026-11-03 21:05
+  title: 'Unit test for #variant in models allowlist'
+  tags:
+    - tests
+    - config
+  change: >-
+    Added unit test verifying models allowlist parses #variant, explicit variant option, and deduplicates canonical keys
+    correctly.
+  reason: 'Verify #variant parsing in allowlists.'
+  invariant: Unit tests use injected env objects, never real process.env.
+  files:
+    - tests/config.test.ts
+- datetime: 2026-11-03 21:06
+  title: Import shouldSwitchModel in model-router.test.ts
+  tags:
+    - tests
+    - model-routing
+  change: Imported shouldSwitchModel in model-router.test.ts.
+  reason: Test shouldSwitchModel function.
+  invariant: Unit test imports only.
+  files:
+    - tests/router/model-router.test.ts
+- datetime: 2026-11-03 21:07
+  title: 'Unit tests for #variant in model-router.test.ts'
+  tags:
+    - tests
+    - model-routing
+  change: >-
+    Added unit tests for allowlist with #variant (candidate key, variant, describeCandidate) and shouldSwitchModel
+    logic.
+  reason: Test thinking effort variant support in model router.
+  invariant: Fakes only, no real host calls.
+  files:
+    - tests/router/model-router.test.ts
+- datetime: 2026-11-03 21:08
+  title: Allow custom models in prompt-hook test world
+  tags:
+    - tests
+    - routing
+  change: world() helper accepts optional models array in prompt-hook.test.ts.
+  reason: Enable testing model allowlists with variants in prompt hook tests.
+  invariant: Test world helper defaults remain unchanged.
+  files:
+    - tests/router/prompt-hook.test.ts
+- datetime: 2026-11-03 21:08
+  title: Use opts.models in prompt-hook test world options
+  tags:
+    - tests
+    - routing
+  change: options.models in prompt-hook test world defaults to opts.models ?? [].
+  reason: Pass models option from test config into prompt hook.
+  invariant: Empty models array default preserved.
+  files:
+    - tests/router/prompt-hook.test.ts
+- datetime: 2026-11-03 21:08
+  title: Test switchModel receives variant from candidate choice
+  tags:
+    - tests
+    - model-routing
+  change: >-
+    Added unit test asserting choice with #variant calls switchModel with { providerID, id, variant } and stores variant
+    on plan.model.
+  reason: Verify switchModel receives thinking effort variant from routed choice.
+  invariant: Fakes only, test world isolation preserved.
+  files:
+    - tests/router/prompt-hook.test.ts
+- datetime: 2026-11-03 21:11
+  title: Fix test closure syntax in config.test.ts
+  tags:
+    - tests
+    - config
+  change: Restored closing assertions for existing models allowlist test in config.test.ts.
+  reason: Fix syntax error in config.test.ts.
+  invariant: Both tests closed and assert independently.
+  files:
+    - tests/config.test.ts
+- datetime: 2026-11-03 21:12
+  title: 'Document #variant thinking effort in README.md'
+  tags:
+    - docs
+    - README
+    - model-routing
+  change: >-
+    Documented #variant and explicit variant option for thinking effort levels (e.g. #high, #medium) in README.md models
+    allowlist section.
+  reason: Document how to configure thinking effort variants.
+  invariant: README is UTF-8 without BOM. No secrets in README.
+  files:
+    - README.md
+- datetime: 2026-11-03 21:16
+  title: Update full example section in README.md
+  tags:
+    - docs
+    - README
+    - model-routing
+  change: >-
+    Updated 'Full example:' section in README.md to use modern model IDs, include thinking effort variants (#medium,
+    #high), modelMinConfidence 0.35, and debug option; updated options table models row to show provider/id[#variant].
+  reason: User requested updating the full example section in README.
+  invariant: README is UTF-8 without BOM. No secrets in README.
+  files:
+    - README.md

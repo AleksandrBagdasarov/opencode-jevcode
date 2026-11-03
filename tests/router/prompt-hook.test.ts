@@ -62,6 +62,7 @@ function world(opts: {
   catalog?: unknown;
   modelMinConfidence?: number;
   variant?: string;
+  models?: Array<{ model: string; variant?: string }>;
 } = {}): World {
   const sessions = new Map<string, { agent?: string; model?: ModelRef }>();
   const agent = "agent" in opts ? opts.agent : "jevCode";
@@ -89,7 +90,7 @@ function world(opts: {
       },
     },
   };
-  const options = { makeDefault: opts.makeDefault ?? false, models: [], modelMinConfidence: opts.modelMinConfidence ?? 0.5, timeoutMs: 200 };
+  const options = { makeDefault: opts.makeDefault ?? false, models: opts.models ?? [], modelMinConfidence: opts.modelMinConfidence ?? 0.5, timeoutMs: 200 };
   const client = {
     ask: async (state: unknown, questions: Questions) => {
       asks.push({ state, questions });
@@ -124,6 +125,17 @@ describe("jevCode prompt: model switching", () => {
     expect(plan.fallbackReason).toBeUndefined();
     expect(plan.model).toEqual({ providerID: "mock", id: "m-big", confidence: 0.8 });
     expect(plan.turnKey).toBe("msg_1");
+  });
+
+  test("choice with #variant => switchModel is called with { providerID, id, variant }", async () => {
+    const w = world({
+      models: [{ model: "mock/m-big#high" }, { model: "mock/m-small" }],
+      answer: choose("mock/m-big#high", 0.85),
+    });
+    await w.hook(prompt());
+    expect(w.switches).toEqual([{ sessionID: "s1", model: { providerID: "mock", id: "m-big", variant: "high" } }]);
+    const plan = w.plans.get("s1")!;
+    expect(plan.model).toEqual({ providerID: "mock", id: "m-big", variant: "high", confidence: 0.85 });
   });
 
   test("the question lists candidate keys and keep, and the state carries the request text", async () => {

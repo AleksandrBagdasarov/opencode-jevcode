@@ -172,6 +172,27 @@ describe("resolveOptions validation", () => {
       { model: "d/short" },
     ]);
   });
+
+  test("models allowlist supports #variant and explicit variant option for thinking effort", () => {
+    const r = resolveOptions(
+      {
+        models: [
+          { model: "opencode/claude-sonnet-5-5#high", profile: "large-context" },
+          { model: "opencode/gemini-3.8-flash", variant: "medium", profile: "reasoning" },
+          "opencode/gpt-5.4-nano#low",
+          { model: "opencode/claude-sonnet-5-5#high" }, // duplicate with same variant
+          { model: "opencode/claude-sonnet-5-5#low", profile: "fast" }, // same base model, different variant kept
+        ],
+      },
+      noEnv,
+    );
+    expect(r.models).toEqual([
+      { model: "opencode/claude-sonnet-5-5#high", variant: "high", profile: "large-context" },
+      { model: "opencode/gemini-3.8-flash#medium", variant: "medium", profile: "reasoning" },
+      { model: "opencode/gpt-5.4-nano#low", variant: "low" },
+      { model: "opencode/claude-sonnet-5-5#low", variant: "low", profile: "fast" },
+    ]);
+  });
 });
 
 describe("resolveOptions api key", () => {
